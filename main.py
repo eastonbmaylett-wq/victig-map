@@ -120,7 +120,7 @@ async def update_county(payload: dict):
     description = payload.get("description", "")
     if not fips:
         raise HTTPException(status_code=400, detail="fips required")
-    if status not in ("ok", "delay", "high_tat", "significant"):
+    if status not in ("ok", "delay", "high_tat", "significant", "closed"):
         raise HTTPException(status_code=400, detail="invalid status")
     with open(DATA_FILE) as f:
         data = json.load(f)
@@ -377,7 +377,14 @@ async def upload_desc_doc(password: str, file: UploadFile = File(...)):
         if fips and fips in counties:
             counties[fips]['description'] = desc
             counties[fips]['_desc_doc'] = True
-            if counties[fips].get('status') == 'ok':
+            # Auto-detect status from description keywords
+            low = desc.lower()
+            if any(kw in low for kw in ('closed indefinitely','closed for','courthouse is closed',
+                                         'inaccessible','no access','shut down','closed due',
+                                         'operations ceased','closed until','closed effective',
+                                         'not yet resumed','have not resumed')):
+                counties[fips]['status'] = 'closed'
+            elif counties[fips].get('status') == 'ok':
                 counties[fips]['status'] = 'delay'
             updated += 1
         else:
@@ -507,7 +514,7 @@ async def update_state(payload: dict):
     description = payload.get("description", "")
     if not state:
         raise HTTPException(status_code=400, detail="state required")
-    if status not in ("ok", "delay", "high_tat", "significant"):
+    if status not in ("ok", "delay", "high_tat", "significant", "closed"):
         raise HTTPException(status_code=400, detail="invalid status")
     with open(DATA_FILE) as f:
         data = json.load(f)
