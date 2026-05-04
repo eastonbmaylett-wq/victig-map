@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Victig Court Search — TAT Map</title>
+<script src="/d3.min.js"></script>
+<script src="/topojson-client.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#fff}
+#wrap{width:100%;height:100%;position:relative}
+svg{width:100%;height:100%}
+.county{stroke:#e8e8e8;stroke-width:.3;cursor:pointer}
+.county:hover{stroke:#333;stroke-width:1}
+.state-border{fill:none;stroke:white;stroke-width:1.8;pointer-events:none}
+#legend{position:absolute;bottom:10px;left:10px;background:white;border-radius:7px;padding:8px 11px;box-shadow:0 2px 8px rgba(0,0,0,.12);font-size:11px;line-height:1.9}
+.leg-row{display:flex;align-items:center;gap:6px}
+.leg-sw{width:10px;height:10px;border-radius:2px}
+#tooltip{position:absolute;background:rgba(20,30,50,.88);color:white;border-radius:6px;padding:5px 10px;font-size:12px;pointer-events:none;display:none;white-space:nowrap}
+#popup{position:absolute;background:white;border-radius:9px;box-shadow:0 4px 20px rgba(0,0,0,.18);padding:14px;width:240px;z-index:200;display:none;font-size:12px}
+#popup-close{position:absolute;top:7px;right:9px;cursor:pointer;font-size:15px;color:#bbb}
+#popup h3{font-size:13px;color:#1a2b45;margin-bottom:6px;padding-right:16px}
+.p-badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;margin-bottom:7px;text-transform:uppercase}
+.p-stat{color:#555;margin-bottom:2px}
+.p-desc{font-size:11px;color:#555;background:#f8f8f8;border-radius:5px;padding:5px 7px;line-height:1.4;border-left:3px solid #dea922;margin-top:6px}
+#brand{position:absolute;bottom:10px;right:10px;font-size:10px;color:#bbb}
+#data-info{position:absolute;top:8px;right:10px;font-size:10px;color:#aaa;background:rgba(255,255,255,.8);padding:2px 7px;border-radius:4px}
+#zoom-btns{position:absolute;top:8px;left:10px;display:flex;flex-direction:column;gap:4px}
+#zoom-btns button{width:26px;height:26px;border:none;border-radius:5px;background:white;box-shadow:0 1px 4px rgba(0,0,0,.15);font-size:14px;cursor:pointer;color:#333}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <svg id="map-svg"></svg>
+  <div id="legend">
+    <div class="leg-row"><div class="leg-sw" style="background:#55ae5c"></div>No Delay</div>
+    <div class="leg-row"><div class="leg-sw" style="background:#dea922"></div>Delay</div>
+    <div class="leg-row"><div class="leg-sw" style="background:#de7612"></div>Avg TAT &gt;14d</div>
+    <div class="leg-row"><div class="leg-sw" style="background:#cf4027"></div>Significant Delay</div>
+    <div class="leg-row"><div class="leg-sw" style="background:#d4d8dd"></div>No Data</div>
+  </div>
+  <div id="zoom-btns">
+    <button id="z-in" title="Zoom in">+</button>
+    <button id="z-reset" title="Reset">⌂</button>
+    <button id="z-out" title="Zoom out">−</button>
+  </div>
+  <div id="data-info"></div>
+  <div id="tooltip"></div>
+  <div id="popup">
+    <span id="popup-close" onclick="closePopup()">✕</span>
+    <h3 id="popup-name"></h3>
+    <div id="popup-body"></div>
+  </div>
+  <div id="brand">victig.com</div>
+</div>
+<script>
+const STATUS = {
+  ok:          {fill:'#55ae5c',label:'No Delay',        badge:'#d4edda',text:'#155724'},
+  delay:       {fill:'#dea922',label:'Delay',            badge:'#fff3cd',text:'#856404'},
+  high_tat:    {fill:'#de7612',label:'Avg TAT >14 Days', badge:'#ffe5cc',text:'#7a3600'},
+  significant: {fill:'#cf4027',label:'Significant Delay',badge:'#f8d7da',text:'#721c24'},
+  no_data:     {fill:'#d4d8dd',label:'No Data',          badge:'#f0f0f0',text:'#888'},
+};
+let counties={}, svgSel, svgZoom, pathFn, topoData;
+
+function getFill(fips){ return STATUS[counties[fips]?.status]?.fill || STATUS.no_data.fill; }
+
+function fmtTAT(d){
+  if(d==null) return '—';
+  if(d<1){ const m=Math.round(d*60); return m+'m'; }
+  if(d<2) return d.toFixed(1)+'d';
+  return Math.round(d)+'d';
+}
+
+async function init(){
+  const [topo,data] = await Promise.all([
+    fetch('counties-10m.json').then(r=>r.json()),
+    fetch('county-data.json').then(r=>r.json())
+  ]);
+  topoData=topo; counties=data.counties;
+  if(data.maxDate) document.getElementById('data-info').textContent='Data through '+data.maxDate;
+  drawMap(topo);
+}
+
+function drawMap(topo){
+  const wrap=document.getElementById('wrap');
+  const W=wrap.clientWidth||window.innerWidth, H=wrap.clientHeight||window.innerHeight;
+  svgSel=d3.select('#map-svg').attr('width',W).attr('height',H);
+  const allC=topojson.feature(topo,topo.objects.counties);
+  const allS=topojson.feature(topo,topo.objects.states);
+  const sM=topojson.mesh(topo,topo.objects.states,(a,b)=>a!==b);
+  const proj=d3.geoAlbersUsa().fitSize([W,H],allC);
+  const path=d3.geoPath().projection(proj);
+  pathFn=path;
+  const g=svgSel.append('g');
+  g.append('g').selectAll('path').data(allC.features).join('path')
+    .attr('class','county').attr('d',path).attr('fill',d=>getFill(d.id))
+    .on('mousemove',(ev,d)=>{
+      const c=counties[d.id]; if(!c) return;
+      const tt=document.getElementById('tooltip');
+      tt.textContent=`${c.name}, ${c.state} — ${STATUS[c.status]?.label||'No Data'}`;
+      tt.style.display='block';
+      tt.style.left=(ev.offsetX+12)+'px'; tt.style.top=(ev.offsetY-8)+'px';
+    })
+    .on('mouseleave',()=>document.getElementById('tooltip').style.display='none')
+    .on('click',(ev,d)=>showPopup(ev,d));
+  g.append('path').datum(sM).attr('class','state-border').attr('d',path);
+  svgZoom=d3.zoom().scaleExtent([1,12]).on('zoom',e=>{
+    g.attr('transform',e.transform);
+    g.selectAll('.county').attr('stroke-width',.3/e.transform.k);
+    g.selectAll('.state-border').attr('stroke-width',1.8/e.transform.k);
+    closePopup();
+  });
+  svgSel.call(svgZoom);
+  svgSel.on('dblclick.zoom',null);
+  document.getElementById('z-in').onclick=()=>svgSel.transition().call(svgZoom.scaleBy,1.6);
+  document.getElementById('z-out').onclick=()=>svgSel.transition().call(svgZoom.scaleBy,.625);
+  document.getElementById('z-reset').onclick=()=>svgSel.transition().call(svgZoom.transform,d3.zoomIdentity);
+}
+
+function showPopup(ev,d){
+  const c=counties[d.id]||{}; const sc=STATUS[c.status]||STATUS.no_data;
+  const p90=c.periods?.['90d']; const lat=c.latest;
+  document.getElementById('tooltip').style.display='none';
+  document.getElementById('popup-name').textContent=`${c.name||d.id} County, ${c.state||''}`;
+  document.getElementById('popup-body').innerHTML=`
+    <span class="p-badge" style="background:${sc.badge};color:${sc.text}">${sc.label}</span>
+    ${p90?`<div class="p-stat">Avg TAT (90d): <b>${fmtTAT(p90.avg)}</b> &nbsp;|&nbsp; Max: ${fmtTAT(p90.max)}</div>`:''}
+    ${lat?`<div class="p-stat" style="font-size:11px;color:#aaa">Last search: ${lat.date}</div>`:''}
+    ${c.description?`<div class="p-desc">${c.description}</div>`:
+      (c.status==='ok'||!c.status)?`<div style="font-size:11px;color:#55ae5c;margin-top:4px">✓ No active court delays</div>`:''}
+  `;
+  const popup=document.getElementById('popup');
+  popup.style.display='block';
+  const wrap=document.getElementById('wrap');
+  let x=ev.offsetX+14, y=ev.offsetY-10;
+  if(x+250>wrap.clientWidth) x=ev.offsetX-260;
+  if(y+200>wrap.clientHeight) y=wrap.clientHeight-210;
+  popup.style.left=x+'px'; popup.style.top=Math.max(4,y)+'px';
+}
+function closePopup(){ document.getElementById('popup').style.display='none'; }
+document.addEventListener('click',e=>{ if(!e.target.closest('#popup')&&!e.target.closest('.county')) closePopup(); });
+init().catch(e=>console.error(e));
+</script>
+</body>
+</html>

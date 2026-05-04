@@ -20,10 +20,10 @@ PW_HASH   = "b3121997c76507dc7adcf3ca13ee60d519cbc3c72a176527e8ba575fc13f3406"
 # ── Security headers ──────────────────────────────────────────────────────
 SECURITY_HEADERS = {
     "X-Content-Type-Options":    "nosniff",
-    "X-Frame-Options":           "DENY",
     "X-XSS-Protection":          "1; mode=block",
     "Referrer-Policy":           "no-referrer",
     "Permissions-Policy":        "geolocation=(), camera=(), microphone=()",
+    # X-Frame-Options intentionally omitted — map is designed to be embedded in TazWorks/InstaScreen
 }
 
 def secure(response: Response):
@@ -105,6 +105,12 @@ def get_topojson():
 def admin_page():
     return FileResponse(BASE / "admin.html", media_type="text/html",
                         headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
+
+@app.get("/embed")
+def embed_page():
+    """Iframe-optimised view — no header, full-bleed map."""
+    return FileResponse(BASE / "embed.html", media_type="text/html",
+                        headers={"Cache-Control": "no-store, no-cache"})
 
 @app.post("/admin/update-county")
 async def update_county(payload: dict):
