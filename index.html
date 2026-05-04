@@ -147,8 +147,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   <div class="tb-sep"></div>
   <span class="tb-label">Color:</span>
   <div class="btn-group">
-    <button class="tb-btn active" data-color="bucket">Status</button>
-    <button class="tb-btn" data-color="gradient">Gradient</button>
+    <button class="tb-btn" data-color="bucket">Status</button>
+    <button class="tb-btn active" data-color="gradient">Gradient</button>
   </div>
   <div class="tb-sep"></div>
   <span class="tb-label">Filter:</span>
@@ -187,7 +187,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   </div>
 
   <div id="legend">
-    <div id="legend-buckets">
+    <div id="legend-buckets" style="display:none">
       <h4>TAT Status</h4>
       <div class="leg-row"><div class="leg-sw" style="background:#55ae5c"></div>No Delay <span style="color:#bbb;font-size:10px">(on track)</span></div>
       <div class="leg-row"><div class="leg-sw" style="background:#dea922"></div>Delay <span style="color:#bbb;font-size:10px">(expect slow turnaround)</span></div>
@@ -195,7 +195,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <div class="leg-row"><div class="leg-sw" style="background:#cf4027"></div>Significant Delay <span style="color:#bbb;font-size:10px">(severely impacted)</span></div>
       <div class="leg-row"><div class="leg-sw" style="background:#d4d8dd"></div>No Data <span style="color:#bbb;font-size:10px">(no recent searches)</span></div>
     </div>
-    <div id="legend-gradient" style="display:none">
+    <div id="legend-gradient">
       <h4>Avg TAT (days)</h4>
       <div id="gradient-bar"></div>
       <div id="gradient-labels"><span>Fastest</span><span>Slowest</span></div>
@@ -252,7 +252,7 @@ let editingFips = null;
 let countyPaths = {};
 let activePeriod = '90d';
 let activeType   = 'all';
-let activeColor  = 'bucket';
+let activeColor  = 'gradient';
 let activeFilter = 'all';
 let svgZoom, svgSel, gSel;
 let topoData;
