@@ -440,8 +440,8 @@ function drawMap(topo){
     geometries: topo.objects.counties.geometries.filter(g => String(g.id).startsWith('72'))
   });
   if(prFeatures.features.length) {
-    const PW = Math.round(W * 0.15), PH = Math.round(PW * 0.55);
-    const PX = W - PW - 12, PY = H - PH - 12;
+    const PW = Math.round(W * 0.13), PH = Math.round(PW * 0.55);
+    const PX = 12, PY = H - PH - 14; // bottom-left, clear of legend
     const prProj = d3.geoAlbers().rotate([66,0]).parallels([8,18]).fitSize([PW, PH], prFeatures);
     const prPath = d3.geoPath().projection(prProj);
     const prG = svgSel.append('g').attr('class','pr-inset').attr('transform',`translate(${PX},${PY})`);
