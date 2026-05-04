@@ -331,7 +331,36 @@ function dimmed(fips){
 // ── Init ─────────────────────────────────────────────────────────────────
 function setStatus(msg){ document.getElementById('data-date').textContent = msg; }
 
+let siteConfig = {};
+async function loadSiteConfig(){
+  try{
+    const r = await fetch('/site-config.json');
+    siteConfig = await r.json();
+    // Apply title
+    if(siteConfig.title) document.querySelector('h1').textContent = siteConfig.title;
+    if(siteConfig.subtitle) document.getElementById('data-date').textContent = siteConfig.subtitle;
+    // Apply status labels
+    if(siteConfig.statusLabels){
+      Object.entries(siteConfig.statusLabels).forEach(([k,v])=>{
+        if(STATUS[k]) STATUS[k].label = v;
+      });
+    }
+    // Apply legend notes
+    if(siteConfig.legendNotes){
+      document.querySelectorAll('.leg-note').forEach(el=>{
+        const key = el.dataset.status;
+        if(key && siteConfig.legendNotes[key]) el.textContent = siteConfig.legendNotes[key];
+      });
+    }
+    // Apply panel titles
+    const panelHeaders = document.querySelectorAll('.panel-header h4');
+    if(siteConfig.fastestTitle && panelHeaders[0]) panelHeaders[0].innerHTML = '🥇 ' + siteConfig.fastestTitle;
+    if(siteConfig.slowestTitle && panelHeaders[1]) panelHeaders[1].innerHTML = '🐢 ' + siteConfig.slowestTitle;
+  } catch(e){}
+}
+
 async function init(){
+  await loadSiteConfig();
   setStatus('Loading map data…');
   let topo, data;
   try {

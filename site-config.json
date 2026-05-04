@@ -1,0 +1,22 @@
+{
+  "title": "Victig Court Search — TAT Map",
+  "subtitle": "Court turnaround time by county",
+  "statusLabels": {
+    "ok":          "No Delay",
+    "delay":       "Delay",
+    "high_tat":    "Avg TAT >14 Days",
+    "significant": "Significant Delay",
+    "closed":      "Closed / No Access"
+  },
+  "legendNotes": {
+    "ok":          "on track",
+    "delay":       "expect slow turnaround",
+    "high_tat":    "2+ weeks",
+    "significant": "severely impacted",
+    "closed":      "courthouse closed"
+  },
+  "badgeLabel": "delayed",
+  "fastestTitle": "Fastest Counties",
+  "slowestTitle": "Slowest Counties",
+  "brandText": ""
+}

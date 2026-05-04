@@ -14,7 +14,8 @@ app.add_middleware(
 )
 
 BASE = Path(__file__).parent
-DATA_FILE = BASE / "county-data.json"
+DATA_FILE   = BASE / "county-data.json"
+CONFIG_FILE = BASE / "site-config.json"
 PW_HASH   = "b3121997c76507dc7adcf3ca13ee60d519cbc3c72a176527e8ba575fc13f3406"
 
 # ── Security headers ──────────────────────────────────────────────────────
@@ -52,7 +53,7 @@ async def block_raw_files(request: Request, call_next):
         return JSONResponse(status_code=404, content={"detail": "Not found"})
     # Block any file extension that shouldn't be public
     suffix = Path(path).suffix.lower()
-    ALLOWED_FILES = {"county-data.json", "counties-10m.json", "d3.min.js", "topojson-client.min.js"}
+    ALLOWED_FILES = {"county-data.json", "counties-10m.json", "d3.min.js", "topojson-client.min.js", "site-config.json"}
     if suffix in BLOCKED_EXTENSIONS and path not in ALLOWED_FILES:
         return JSONResponse(status_code=404, content={"detail": "Not found"})
     response = await call_next(request)
@@ -101,6 +102,22 @@ def get_topojson():
 
 
 # ── Admin routes (password required for all writes) ───────────────────────
+@app.get("/site-config.json")
+def get_site_config():
+    return FileResponse(CONFIG_FILE, media_type="application/json",
+                        headers={"Cache-Control": "no-cache"})
+
+@app.post("/admin/site-config")
+async def update_site_config(payload: dict):
+    check_auth(payload.get("password", ""))
+    config = payload.get("config", {})
+    allowed_keys = {"title", "subtitle", "statusLabels", "legendNotes",
+                    "badgeLabel", "fastestTitle", "slowestTitle", "brandText"}
+    safe = {k: v for k, v in config.items() if k in allowed_keys}
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(safe, f, indent=2)
+    return {"ok": True}
+
 @app.get("/admin")
 def admin_page():
     return FileResponse(BASE / "admin.html", media_type="text/html",
