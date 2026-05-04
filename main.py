@@ -103,7 +103,8 @@ def get_topojson():
 # ── Admin routes (password required for all writes) ───────────────────────
 @app.get("/admin")
 def admin_page():
-    return FileResponse(BASE / "admin.html", media_type="text/html")
+    return FileResponse(BASE / "admin.html", media_type="text/html",
+                        headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
 
 @app.post("/admin/update-county")
 async def update_county(payload: dict):
