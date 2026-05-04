@@ -64,6 +64,18 @@ async def block_raw_files(request: Request, call_next):
 def root():
     return FileResponse(BASE / "index.html", media_type="text/html")
 
+@app.get("/d3.min.js")
+def d3_js():
+    return FileResponse(BASE / "d3.min.js", media_type="application/javascript")
+
+@app.get("/topojson-client.min.js")
+def topojson_js():
+    return FileResponse(BASE / "topojson-client.min.js", media_type="application/javascript")
+
+@app.get("/counties-10m.json")
+def counties_topo():
+    return FileResponse(BASE / "counties-10m.json", media_type="application/json")
+
 @app.get("/county-data.json")
 def get_data():
     """Serve only the sanitized county stats — no PII."""
