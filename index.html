@@ -644,16 +644,14 @@ function buildPanels(){
     <div class="rank-row" onclick="flyTo('${x.fips}')">
       <span class="rank-medal">${i<3?MEDALS[i]:''}</span>
       <span class="rank-num">${i>=3?i+1:''}</span>
-      <div><div class="rank-name">${x.c.name}, ${x.c.state}</div>
-      <div class="rank-tat">${daysToReadable(x.s.avg)} avg</div></div>
+      <div><div class="rank-name">${x.c.name}, ${x.c.state}</div></div>
     </div>`).join('');
 
   document.getElementById('panel-slowest').innerHTML = slowest.map((x,i)=>`
     <div class="rank-row" onclick="flyTo('${x.fips}')">
       <span class="rank-medal">${i<3?['🔴','🟠','🟡'][i]:''}</span>
       <span class="rank-num">${i>=3?i+1:''}</span>
-      <div><div class="rank-name">${x.c.name}, ${x.c.state}</div>
-      <div class="rank-tat">${daysToReadable(x.s.avg)} avg</div></div>
+      <div><div class="rank-name">${x.c.name}, ${x.c.state}</div></div>
     </div>`).join('');
 
   // Draw medal labels on the map over top-3 fastest counties
