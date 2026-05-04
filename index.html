@@ -419,7 +419,7 @@ function drawMap(topo){
       const k = event.transform.k;
       gSel.selectAll('.county').attr('stroke-width', 0.3/k);
       gSel.selectAll('.state-border').attr('stroke-width', 2/k);
-      gSel.selectAll('.county-medal').attr('font-size', 22/k + 'px');
+      placeMedalsOnMap(currentMedalData);
       closePopup();
     });
   svgSel.call(svgZoom);
@@ -611,37 +611,48 @@ function buildPanels(){
     </div>`).join('');
 
   // Draw medal labels on the map over top-3 fastest counties
-  placeMedalsOnMap(fastest.slice(0,3));
+  currentMedalData = fastest.slice(0,3);
+  placeMedalsOnMap(currentMedalData);
 }
 
+let currentMedalData = [];
+
 function placeMedalsOnMap(top3){
-  if(!gSel || !pathFn) return;
-  gSel.selectAll('.county-medal').remove();
-  const k = d3.zoomTransform(svgSel.node()).k || 1;
+  if(!svgSel || !pathFn) return;
+  // Medals live OUTSIDE the zoom group so they stay fixed size on screen
+  svgSel.selectAll('.medal-layer').remove();
+  if(!top3 || !top3.length) return;
+
+  const transform = d3.zoomTransform(svgSel.node());
+  const layer = svgSel.append('g').attr('class','medal-layer');
+
   top3.forEach((x, i) => {
     const el = countyPaths[x.fips];
     if(!el) return;
-    // Use bounding box center for better visual centering
-    let cx, cy;
+    // Get centroid in gSel coordinate space
+    let gx, gy;
     try {
       const bb = el.getBBox();
-      cx = bb.x + bb.width / 2;
-      cy = bb.y + bb.height / 2;
+      gx = bb.x + bb.width / 2;
+      gy = bb.y + bb.height / 2;
     } catch(e) {
-      const d = d3.select(el).datum();
-      if(!d) return;
-      [cx, cy] = pathFn.centroid(d);
+      const datum = d3.select(el).datum();
+      if(!datum) return;
+      [gx, gy] = pathFn.centroid(datum);
     }
-    if(!cx || !cy || isNaN(cx) || isNaN(cy)) return;
-    gSel.append('text')
+    if(isNaN(gx) || isNaN(gy)) return;
+    // Convert gSel coords -> screen coords using current zoom transform
+    const [sx, sy] = transform.apply([gx, gy]);
+    layer.append('text')
       .attr('class','county-medal')
-      .attr('x', cx)
-      .attr('y', cy + 8)
+      .attr('x', sx)
+      .attr('y', sy + 2)
       .attr('text-anchor','middle')
       .attr('dominant-baseline','middle')
-      .attr('font-size', (22/k) + 'px')
+      .attr('font-size','28px')
       .attr('pointer-events','none')
       .style('user-select','none')
+      .style('filter','drop-shadow(0 1px 2px rgba(0,0,0,.3))')
       .text(MEDALS[i]);
   });
 }
