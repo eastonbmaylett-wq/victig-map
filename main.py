@@ -144,7 +144,22 @@ async def upload_csv(password: str, file: UploadFile = File(...)):
         try:
             import openpyxl
             wb = openpyxl.load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
-            ws = wb.active
+            # Pick the main data sheet (prefer sheet with most rows / matching name)
+            ws = None
+            for sname in wb.sheetnames:
+                n = sname.lower()
+                if 'turnaround' in n or ('search' in n and 'tat' not in n) or \
+                   ('tat' in n and 'fastest' not in n and 'outlier' not in n):
+                    ws = wb[sname]; break
+            if ws is None:
+                # Fall back to largest sheet by row count
+                best, best_rows = None, 0
+                for sname in wb.sheetnames:
+                    s = wb[sname]
+                    r = s.max_row or 0
+                    if r > best_rows:
+                        best_rows, best = r, sname
+                ws = wb[best] if best else wb.active
             rows = list(ws.iter_rows(values_only=True))
             with open(tmp, "w", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
@@ -153,7 +168,7 @@ async def upload_csv(password: str, file: UploadFile = File(...)):
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Excel parse error: {e}")
     elif name.endswith(".xls"):
-        raise HTTPException(status_code=400, detail="Old .xls format not supported — please Save As .xlsx in Excel first")
+        raise HTTPException(status_code=400, detail="Old .xls format not supported - please Save As .xlsx in Excel first")
     elif name.endswith(".tsv") or name.endswith(".txt"):
         # Tab-separated → convert to comma CSV
         text = raw.decode("utf-8-sig", errors="replace")
@@ -188,7 +203,20 @@ async def preview_columns(password: str, file: UploadFile = File(...)):
         if name.endswith(".xlsx"):
             import openpyxl
             wb = openpyxl.load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
-            ws = wb.active
+            ws = None
+            for sname in wb.sheetnames:
+                n = sname.lower()
+                if 'turnaround' in n or ('search' in n and 'tat' not in n) or \
+                   ('tat' in n and 'fastest' not in n and 'outlier' not in n):
+                    ws = wb[sname]; break
+            if ws is None:
+                best, best_rows = None, 0
+                for sname in wb.sheetnames:
+                    s = wb[sname]
+                    r = s.max_row or 0
+                    if r > best_rows:
+                        best_rows, best = r, sname
+                ws = wb[best] if best else wb.active
             rows = [list(r) for r in list(ws.iter_rows(values_only=True))[:6]]
         else:
             text = raw.decode("utf-8-sig", errors="replace")
