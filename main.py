@@ -226,6 +226,113 @@ async def preview_columns(password: str, file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail=str(e))
     return {"rows": rows}
 
+@app.post("/admin/upload-descriptions")
+async def upload_descriptions(password: str, file: UploadFile = File(...)):
+    """Import a CSV/Excel with jurisdiction + description columns."""
+    check_auth(password)
+    name = (file.filename or "").lower()
+    raw  = await file.read()
+    rows = []
+
+    try:
+        if name.endswith(".xlsx") or name.endswith(".xlsm"):
+            import openpyxl
+            wb = openpyxl.load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+            ws = wb.active
+            rows = [["" if v is None else str(v).strip() for v in r]
+                    for r in ws.iter_rows(values_only=True)]
+        else:
+            text = raw.decode("utf-8-sig", errors="replace")
+            reader = csv.reader(io.StringIO(text))
+            rows = [[c.strip() for c in r] for r in reader]
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Parse error: {e}")
+
+    if not rows:
+        raise HTTPException(status_code=400, detail="No rows found")
+
+    # Auto-detect columns
+    header = [h.lower() for h in rows[0]]
+    def find_col(*keywords):
+        for kw in keywords:
+            for i, h in enumerate(header):
+                if kw in h: return i
+        return None
+
+    jur_col  = find_col('jurisdiction','county','location','state','name')
+    desc_col = find_col('description','note','delay','text','reason','message','comment')
+    status_col = find_col('status','level','severity')
+
+    if jur_col is None or desc_col is None:
+        raise HTTPException(status_code=400,
+            detail=f"Could not find jurisdiction+description columns. Headers: {rows[0]}")
+
+    # Load county data
+    with open(DATA_FILE) as f:
+        data = json.load(f)
+    counties = data["counties"]
+
+    # Build a lookup: jurisdiction string -> list of fips
+    import re
+    STATE_ABBREVS = {
+        'AL','AK','AZ','AR','CA','CO','CT','DE','DC','FL','GA','HI','ID','IL','IN',
+        'IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH',
+        'NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT',
+        'VT','VA','WA','WV','WI','WY'
+    }
+    def norm(s): return re.sub(r'[^a-z]','',s.lower())
+
+    # Build reverse lookup: norm(state+name) -> fips
+    lookup = {}
+    for fips, c in counties.items():
+        key = norm(c.get('state','') + c.get('name',''))
+        lookup[key] = fips
+        # Also try just name
+        lookup[norm(c.get('name',''))] = fips
+
+    updated = 0
+    skipped = []
+    for row in rows[1:]:
+        if len(row) <= max(jur_col, desc_col): continue
+        jur  = row[jur_col].strip()
+        desc = row[desc_col].strip()
+        status_val = row[status_col].strip().lower() if status_col and status_col < len(row) else None
+        if not jur or not desc: continue
+
+        # Try matching: STATE-COUNTY, or just COUNTY, or full name
+        fips = None
+        # Try STATE-COUNTY format
+        if '-' in jur:
+            parts = jur.split('-', 1)
+            state, county = parts[0].strip().upper(), parts[1].strip()
+            key = norm(state + county)
+            fips = lookup.get(key)
+        if not fips:
+            fips = lookup.get(norm(jur))
+        if not fips:
+            # Try matching just the county name part
+            for k, v in lookup.items():
+                if norm(jur) in k or k in norm(jur):
+                    fips = v; break
+
+        if fips and fips in counties:
+            counties[fips]['description'] = desc
+            counties[fips]['_admin_override'] = True
+            if status_val and status_val in ('ok','delay','high_tat','significant'):
+                counties[fips]['status'] = status_val
+            updated += 1
+        else:
+            skipped.append(jur)
+
+    with open(DATA_FILE, 'w') as f:
+        json.dump(data, f)
+
+    msg = f"Updated {updated} counties."
+    if skipped:
+        msg += f" Skipped {len(skipped)} unmatched: {', '.join(skipped[:5])}"
+        if len(skipped) > 5: msg += f" (+{len(skipped)-5} more)"
+    return {"ok": True, "updated": updated, "skipped": len(skipped), "message": msg}
+
 @app.post("/admin/update-state")
 async def update_state(payload: dict):
     check_auth(payload.get("password", ""))

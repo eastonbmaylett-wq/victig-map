@@ -211,6 +211,24 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
         <button id="import-btn" onclick="doImport()">⬆ Upload & Update Map</button>
       </div>
 
+      <div id="desc-import-section" style="padding:12px 16px;border-bottom:1px solid #f0f0f0;flex-shrink:0">
+        <h2 style="font-size:12px;font-weight:600;color:#1a2b45;margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px">📝 Import Descriptions</h2>
+        <div id="desc-drop-zone" onclick="document.getElementById('desc-file-input').click()"
+             ondragover="event.preventDefault();this.classList.add('drag-over')"
+             ondragleave="this.classList.remove('drag-over')"
+             ondrop="handleDescDrop(event)"
+             style="border:2px dashed #d0d4da;border-radius:7px;padding:10px;text-align:center;cursor:pointer;background:#fafbfc;font-size:12px;transition:all .2s">
+          <div id="desc-drop-idle">📋 Drop descriptions CSV/Excel here</div>
+          <div id="desc-drop-active" style="display:none;font-weight:700;color:#1a2b45">📥 Drop it!</div>
+        </div>
+        <div id="desc-col-preview" style="display:none;margin-top:6px;background:#f4f6f8;border-radius:5px;padding:6px 8px;font-size:11px"></div>
+        <input type="file" id="desc-file-input" accept=".csv,.xlsx,.xls,.tsv,.txt" style="display:none" onchange="handleDescFile(this.files[0])">
+        <div id="desc-ready-banner" style="display:none;background:#d4edda;border:1px solid #55ae5c;border-radius:5px;padding:6px 8px;margin-top:6px;font-size:11px;color:#155724"></div>
+        <div id="desc-status" style="font-size:11px;margin-top:6px;min-height:14px"></div>
+        <button id="desc-import-btn" onclick="doDescImport()" style="display:none;width:100%;margin-top:6px;padding:7px;background:#1a2b45;color:white;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:500">⬆ Upload Descriptions</button>
+        <div style="font-size:10px;color:#aaa;margin-top:5px">CSV/Excel with <b>Jurisdiction</b> + <b>Description</b> columns. Optional <b>Status</b> column.</div>
+      </div>
+
       <div id="list-section">
         <div id="mode-tabs">
           <button class="mode-tab active" id="tab-flagged" onclick="setMode('flagged')">🚩 Flagged (<span id="flagged-count">0</span>)</button>
@@ -657,6 +675,62 @@ function setImportStatus(msg,type){
   const el = document.getElementById('import-status');
   el.textContent = msg;
   el.className = type==='ok'?'status-ok':type==='err'?'status-err':'status-loading';
+}
+
+// ── Descriptions import ─────────────────────────────────────────────
+let pendingDescFile = null;
+
+function handleDescDrop(e){
+  e.preventDefault();
+  document.getElementById('desc-drop-zone').classList.remove('drag-over');
+  handleDescFile(e.dataTransfer.files[0]);
+}
+
+async function handleDescFile(file){
+  if(!file) return;
+  pendingDescFile = file;
+  document.getElementById('desc-drop-zone').classList.add('has-file');
+  document.getElementById('desc-ready-banner').style.display='block';
+  document.getElementById('desc-ready-banner').textContent = '✅ ' + file.name + ' (' + (file.size/1024).toFixed(0) + ' KB)';
+  document.getElementById('desc-import-btn').style.display='block';
+  document.getElementById('desc-status').textContent='';
+  // Preview columns
+  const box = document.getElementById('desc-col-preview');
+  box.style.display='block'; box.textContent='Reading columns…';
+  try {
+    const form = new FormData(); form.append('file', file);
+    const res = await fetch(`/admin/preview-columns?password=${encodeURIComponent(token)}`,{method:'POST',body:form});
+    const data = await res.json();
+    const headers = (data.rows||[])[0]||[];
+    box.innerHTML = '<b style="color:#1a2b45">Columns:</b> ' + headers.map(h=>`<span style="background:#1a2b45;color:white;border-radius:3px;padding:1px 6px;font-size:10px;margin:1px">${h||'?'}</span>`).join(' ');
+  } catch(e){ box.textContent='Preview failed'; }
+}
+
+async function doDescImport(){
+  if(!pendingDescFile) return;
+  document.getElementById('desc-status').textContent='Uploading…';
+  document.getElementById('desc-import-btn').disabled=true;
+  const form = new FormData(); form.append('file', pendingDescFile);
+  try {
+    const res = await fetch(`/admin/upload-descriptions?password=${encodeURIComponent(token)}`,{method:'POST',body:form});
+    const data = await res.json();
+    if(res.ok){
+      document.getElementById('desc-status').textContent='✓ ' + data.message;
+      document.getElementById('desc-status').style.color='#155724';
+      pendingDescFile=null;
+      document.getElementById('desc-import-btn').style.display='none';
+      document.getElementById('desc-ready-banner').style.display='none';
+      document.getElementById('desc-drop-zone').classList.remove('has-file');
+      loadData(); // reload county data
+    } else {
+      document.getElementById('desc-status').textContent='Error: '+(data.detail||'Upload failed');
+      document.getElementById('desc-status').style.color='#cf4027';
+    }
+  } catch(e){
+    document.getElementById('desc-status').textContent='Network error';
+    document.getElementById('desc-status').style.color='#cf4027';
+  }
+  document.getElementById('desc-import-btn').disabled=false;
 }
 
 // ── Embed panel ────────────────────────────────────────────────
