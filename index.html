@@ -418,7 +418,7 @@ function drawMap(topo){
     .attr('class','state-border').attr('d',path);
 
   // Zoom
-  svgZoom = d3.zoom().scaleExtent([1,12])
+  svgZoom = d3.zoom().scaleExtent([0.5,12])
     .on('zoom',(event)=>{
       gSel.attr('transform',event.transform);
       const k = event.transform.k;
