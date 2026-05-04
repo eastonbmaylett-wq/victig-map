@@ -441,9 +441,9 @@ function drawMap(topo){
   });
   if(prFeatures.features.length) {
     const PW = Math.round(W * 0.13), PH = Math.round(PW * 0.55);
-    // Position in Gulf of Mexico — between Texas and Florida
-    const PX = Math.round(W * 0.62 - PW / 2);
-    const PY = Math.round(H * 0.78 - PH / 2);
+    // Gulf of Mexico white space — bottom edge between TX and FL coasts
+    const PX = Math.round(W * 0.64 - PW / 2);
+    const PY = H - PH - 2; // flush to bottom edge = ocean/gulf space
     const prProj = d3.geoAlbers().rotate([66,0]).parallels([8,18]).fitSize([PW, PH], prFeatures);
     const prPath = d3.geoPath().projection(prProj);
     const prG = svgSel.append('g').attr('class','pr-inset').attr('transform',`translate(${PX},${PY})`);
