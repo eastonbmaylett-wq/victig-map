@@ -447,12 +447,18 @@ function drawMap(topo){
     const prProj = d3.geoAlbers().rotate([66,0]).parallels([8,18]).fitSize([PW, PH], prFeatures);
     const prPath = d3.geoPath().projection(prProj);
     const prG = svgSel.append('g').attr('class','pr-inset').attr('transform',`translate(${PX},${PY})`);
-    // Border box
+    // White background box — locks visually over ocean space
     prG.append('rect').attr('width',PW).attr('height',PH)
-      .attr('fill','#f8f9fb').attr('stroke','#ccc').attr('stroke-width',1).attr('rx',4);
+      .attr('fill','white').attr('stroke','#bbb').attr('stroke-width',1).attr('rx',4)
+      .attr('filter','url(#pr-shadow)');
+    // Drop shadow filter
+    const defs = svgSel.select('defs').empty() ? svgSel.append('defs') : svgSel.select('defs');
+    const flt = defs.append('filter').attr('id','pr-shadow');
+    flt.append('feDropShadow').attr('dx',0).attr('dy',1).attr('stdDeviation',2).attr('flood-opacity',0.12);
     // Label
-    prG.append('text').attr('x',4).attr('y',11)
-      .attr('font-size','9px').attr('fill','#999').attr('font-family','sans-serif').text('Puerto Rico');
+    prG.append('text').attr('x',5).attr('y',12)
+      .attr('font-size','9px').attr('fill','#888').attr('font-family','sans-serif')
+      .attr('font-weight','600').text('PUERTO RICO');
     // Counties
     prG.selectAll('.pr-county').data(prFeatures.features).join('path')
       .attr('class','county pr-county')
