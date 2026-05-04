@@ -52,7 +52,8 @@ async def block_raw_files(request: Request, call_next):
         return JSONResponse(status_code=404, content={"detail": "Not found"})
     # Block any file extension that shouldn't be public
     suffix = Path(path).suffix.lower()
-    if suffix in BLOCKED_EXTENSIONS and path not in ("county-data.json",):
+    ALLOWED_FILES = {"county-data.json", "counties-10m.json", "d3.min.js", "topojson-client.min.js"}
+    if suffix in BLOCKED_EXTENSIONS and path not in ALLOWED_FILES:
         return JSONResponse(status_code=404, content={"detail": "Not found"})
     response = await call_next(request)
     for k, v in SECURITY_HEADERS.items():
