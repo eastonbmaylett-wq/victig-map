@@ -41,13 +41,20 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 /* Import section */
 #import-section{padding:14px 16px;border-bottom:1px solid #f0f0f0;flex-shrink:0}
 #import-section h2{font-size:12px;font-weight:600;color:#1a2b45;margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px}
-#drop-zone{border:2px dashed #d0d4da;border-radius:7px;padding:13px;text-align:center;cursor:pointer;transition:all .15s;background:#fafbfc}
-#drop-zone:hover,#drop-zone.drag-over{border-color:#1a2b45;background:#f0f4ff}
+#drop-zone{border:2px dashed #d0d4da;border-radius:7px;padding:13px;text-align:center;cursor:pointer;transition:all .2s;background:#fafbfc;position:relative}
+#drop-zone:hover{border-color:#1a2b45;background:#f0f4ff}
+#drop-zone.drag-over{border:3px solid #1a2b45;background:#e8f0ff;transform:scale(1.02);box-shadow:0 0 0 4px rgba(26,43,69,.1)}
+#drop-zone.drag-over .drop-idle{display:none}
+#drop-zone.drag-over .drop-active{display:block !important}
+#drop-zone.has-file{border-color:#55ae5c;background:#f0faf2}
 #drop-zone .icon{font-size:22px;margin-bottom:4px}
 #drop-zone p{font-size:11px;color:#888;margin-top:3px}
 #drop-zone strong{color:#1a2b45;font-size:12px}
+.drop-active{display:none;font-size:22px;font-weight:700;color:#1a2b45}
 .upload-hint{font-size:11px;color:#aaa;margin-top:7px;line-height:1.5}
 .upload-hint b{color:#555}
+#file-ready-banner{display:none;background:#d4edda;border:1px solid #55ae5c;border-radius:6px;padding:8px 10px;margin-top:8px;font-size:12px;color:#155724;display:none;align-items:center;gap:8px}
+#file-ready-banner .file-icon{font-size:16px}
 #file-input{display:none}
 #import-status{margin-top:8px;font-size:11px;min-height:16px}
 #import-btn{width:100%;margin-top:7px;padding:7px;background:#1a2b45;color:white;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:500;display:none}
@@ -185,12 +192,20 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
              ondragover="event.preventDefault();this.classList.add('drag-over')"
              ondragleave="this.classList.remove('drag-over')"
              ondrop="handleDrop(event)">
-          <div class="icon">📂</div>
-          <strong id="drop-filename">Drop CSV here or click to browse</strong>
-          <p>CSV or Excel (.xlsx) — drag & drop or click</p>
+          <div class="drop-idle">
+            <div class="icon">📂</div>
+            <strong>Drop file here or click to browse</strong>
+            <p>CSV, Excel (.xlsx), TSV — any spreadsheet</p>
+          </div>
+          <div class="drop-active">📥 Drop it!</div>
         </div>
-        <div class="upload-hint">Export from IS/TazWorks going back <b>6 months</b> for full coverage (3 months minimum). All period filters update automatically.</div>
-        <input type="file" id="file-input" accept=".csv,.xlsx" onchange="handleFile(this.files[0])">
+        <div id="file-ready-banner">
+          <span class="file-icon">✅</span>
+          <span id="file-ready-name"></span>
+          <span id="file-ready-size" style="color:#888;margin-left:auto"></span>
+        </div>
+        <div class="upload-hint">Export from IS/TazWorks going back <b>6 months</b> for full coverage (3 months minimum).</div>
+        <input type="file" id="file-input" accept=".csv,.xlsx,.xls,.tsv,.txt" onchange="handleFile(this.files[0])">
         <div id="import-status"></div>
         <button id="import-btn" onclick="doImport()">⬆ Upload & Update Map</button>
       </div>
@@ -566,14 +581,25 @@ function selectState(abbrev){
 function handleDrop(e){
   e.preventDefault();
   document.getElementById('drop-zone').classList.remove('drag-over');
-  handleFile(e.dataTransfer.files[0]);
+  handleFile(e.dataTransfer.files[0] || e.dataTransfer.items?.[0]?.getAsFile());
 }
 function handleFile(file){
-  if(!file || (!file.name.endsWith('.csv') && !file.name.endsWith('.xlsx'))){ setImportStatus('Please select a CSV or Excel file.','err'); return; }
+  if(!file){ return; }
+  if(file.name.endsWith('.xls')){
+    setImportStatus('Old .xls not supported — open in Excel and Save As .xlsx first.','err');
+    return;
+  }
   pendingFile = file;
-  document.getElementById('drop-filename').textContent = file.name;
+  document.getElementById('drop-zone').classList.remove('drag-over');
+  document.getElementById('drop-zone').classList.add('has-file');
+  // Show ready banner
+  const banner = document.getElementById('file-ready-banner');
+  document.getElementById('file-ready-name').textContent = file.name;
+  const mb = (file.size/1024/1024).toFixed(1);
+  document.getElementById('file-ready-size').textContent = mb + ' MB';
+  banner.style.display = 'flex';
   document.getElementById('import-btn').style.display = 'block';
-  setImportStatus(`Ready: ${file.name}`,'ok');
+  setImportStatus('','');
 }
 async function doImport(){
   if(!pendingFile) return;
@@ -586,7 +612,14 @@ async function doImport(){
     const data = await res.json();
     if(res.ok){
       setImportStatus('✓ ' + (data.message || 'Map updated!') + ' Reloading…','ok');
-      setTimeout(()=>{ loadAll(); document.getElementById('import-btn').disabled=false; pendingFile=null; document.getElementById('drop-filename').textContent='Drop CSV here or click to browse'; document.getElementById('import-btn').style.display='none'; },1500);
+      setTimeout(()=>{
+        loadAll();
+        document.getElementById('import-btn').disabled=false;
+        document.getElementById('import-btn').style.display='none';
+        document.getElementById('file-ready-banner').style.display='none';
+        document.getElementById('drop-zone').classList.remove('has-file');
+        pendingFile=null;
+      },1500);
     } else {
       setImportStatus('Error: '+(data.detail||'Upload failed'),'err');
       document.getElementById('import-btn').disabled=false;

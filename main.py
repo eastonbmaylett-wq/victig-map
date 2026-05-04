@@ -23,7 +23,7 @@ SECURITY_HEADERS = {
     "X-XSS-Protection":          "1; mode=block",
     "Referrer-Policy":           "no-referrer",
     "Permissions-Policy":        "geolocation=(), camera=(), microphone=()",
-    # X-Frame-Options intentionally omitted — map is designed to be embedded in TazWorks/InstaScreen
+    # X-Frame-Options intentionally omitted - map is designed to be embedded in TazWorks/InstaScreen
 }
 
 def secure(response: Response):
@@ -68,7 +68,7 @@ def root():
 
 @app.get("/county-data.json")
 def get_data():
-    """Serve only the sanitized county stats — no PII."""
+    """Serve only the sanitized county stats - no PII."""
     return FileResponse(
         DATA_FILE,
         media_type="application/json",
@@ -108,7 +108,7 @@ def admin_page():
 
 @app.get("/embed")
 def embed_page():
-    """Iframe-optimised view — no header, full-bleed map."""
+    """Iframe-optimised view - no header, full-bleed map."""
     return FileResponse(BASE / "embed.html", media_type="text/html",
                         headers={"Cache-Control": "no-store, no-cache"})
 
@@ -136,15 +136,11 @@ async def update_county(payload: dict):
 @app.post("/admin/upload")
 async def upload_csv(password: str, file: UploadFile = File(...)):
     check_auth(password)
-    name = file.filename or ""
-    if not (name.endswith(".csv") or name.endswith(".xlsx")):
-        raise HTTPException(status_code=400, detail="CSV or Excel (.xlsx) files only")
-
+    name = (file.filename or "").lower()
     raw = await file.read()
     tmp = Path("/tmp/victig_upload.csv")
 
-    if name.endswith(".xlsx"):
-        # Convert Excel → CSV
+    if name.endswith(".xlsx") or name.endswith(".xlsm"):
         try:
             import openpyxl
             wb = openpyxl.load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
@@ -153,10 +149,21 @@ async def upload_csv(password: str, file: UploadFile = File(...)):
             with open(tmp, "w", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
                 for row in rows:
-                    writer.writerow(["" if v is None else str(v) for v in row])
+                    writer.writerow(["” if v is None else str(v) for v in row])
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Excel parse error: {e}")
+    elif name.endswith(".xls"):
+        raise HTTPException(status_code=400, detail="Old .xls format not supported — please Save As .xlsx in Excel first")
+    elif name.endswith(".tsv") or name.endswith(".txt"):
+        # Tab-separated → convert to comma CSV
+        text = raw.decode("utf-8-sig", errors="replace")
+        reader = csv.reader(io.StringIO(text), delimiter="\t")
+        with open(tmp, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            for row in reader:
+                writer.writerow(row)
     else:
+        # Treat as CSV (covers .csv and any unknown format)
         with open(tmp, "wb") as f:
             f.write(raw)
 
