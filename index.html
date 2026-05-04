@@ -179,15 +179,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   <div id="panels">
     <div class="side-panel">
       <div class="panel-header" onclick="togglePanel('fastest')">
-        <h4>🥇 Fastest Counties</h4><span class="panel-toggle" id="tog-fastest">▼</span>
+        <h4>🥇 Fastest Counties</h4><span class="panel-toggle" id="tog-fastest">▲</span>
       </div>
-      <div class="panel-body" id="panel-fastest" style="display:none"></div>
+      <div class="panel-body" id="panel-fastest"></div>
     </div>
     <div class="side-panel">
       <div class="panel-header" onclick="togglePanel('slowest')">
-        <h4>🐢 Slowest Counties</h4><span class="panel-toggle" id="tog-slowest">▼</span>
+        <h4>🐢 Slowest Counties</h4><span class="panel-toggle" id="tog-slowest">▲</span>
       </div>
-      <div class="panel-body" id="panel-slowest" style="display:none"></div>
+      <div class="panel-body" id="panel-slowest"></div>
     </div>
   </div>
 
@@ -587,6 +587,14 @@ function updateBadge(){
 // ── Side Panels ───────────────────────────────────────────────────────────
 const MEDALS = ['🥇','🥈','🥉'];
 function buildPanels(){
+  // Update panel subtitles to reflect active filter
+  const periodLabel = {'30d':'30 Days','60d':'60 Days','90d':'3 Months','180d':'6 Months'}[activePeriod] || activePeriod;
+  const typeLabel   = activeType === 'all' ? '' : ` · ${activeType.replace('_',' ')}`;
+  document.querySelectorAll('.panel-header h4').forEach((el, i) => {
+    const icons = ['🥇 Fastest','🐢 Slowest'];
+    el.innerHTML = `${icons[i]} <span style="font-weight:400;color:#aaa;font-size:10px">${periodLabel}${typeLabel}</span>`;
+  });
+
   const eligible = Object.entries(counties)
     .map(([fips,c])=>({fips, c, s: getStats(fips)}))
     .filter(x=> x.s && x.s.count >= 1);
