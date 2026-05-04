@@ -226,6 +226,172 @@ async def preview_columns(password: str, file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail=str(e))
     return {"rows": rows}
 
+# ── Doc description parser ────────────────────────────────────────────────
+STATE_NAMES_FULL = {
+    'ALABAMA','ALASKA','ARIZONA','ARKANSAS','CALIFORNIA','COLORADO','CONNECTICUT',
+    'DELAWARE','FLORIDA','GEORGIA','HAWAII','IDAHO','ILLINOIS','INDIANA','IOWA',
+    'KANSAS','KENTUCKY','LOUISIANA','MAINE','MARYLAND','MASSACHUSETTS','MICHIGAN',
+    'MINNESOTA','MISSISSIPPI','MISSOURI','MONTANA','NEBRASKA','NEVADA',
+    'NEW HAMPSHIRE','NEW JERSEY','NEW MEXICO','NEW YORK','NORTH CAROLINA',
+    'NORTH DAKOTA','OHIO','OKLAHOMA','OREGON','PENNSYLVANIA','RHODE ISLAND',
+    'SOUTH CAROLINA','SOUTH DAKOTA','TENNESSEE','TEXAS','UTAH','VERMONT',
+    'VIRGINIA','WASHINGTON','WEST VIRGINIA','WISCONSIN','WYOMING',
+    'DISTRICT OF COLUMBIA', 'HAWAII',
+}
+STATE_ABBREV = {
+    'ALABAMA':'AL','ALASKA':'AK','ARIZONA':'AZ','ARKANSAS':'AR','CALIFORNIA':'CA',
+    'COLORADO':'CO','CONNECTICUT':'CT','DELAWARE':'DE','FLORIDA':'FL','GEORGIA':'GA',
+    'HAWAII':'HI','IDAHO':'ID','ILLINOIS':'IL','INDIANA':'IN','IOWA':'IA',
+    'KANSAS':'KS','KENTUCKY':'KY','LOUISIANA':'LA','MAINE':'ME','MARYLAND':'MD',
+    'MASSACHUSETTS':'MA','MICHIGAN':'MI','MINNESOTA':'MN','MISSISSIPPI':'MS',
+    'MISSOURI':'MO','MONTANA':'MT','NEBRASKA':'NE','NEVADA':'NV',
+    'NEW HAMPSHIRE':'NH','NEW JERSEY':'NJ','NEW MEXICO':'NM','NEW YORK':'NY',
+    'NORTH CAROLINA':'NC','NORTH DAKOTA':'ND','OHIO':'OH','OKLAHOMA':'OK',
+    'OREGON':'OR','PENNSYLVANIA':'PA','RHODE ISLAND':'RI','SOUTH CAROLINA':'SC',
+    'SOUTH DAKOTA':'SD','TENNESSEE':'TN','TEXAS':'TX','UTAH':'UT','VERMONT':'VT',
+    'VIRGINIA':'VA','WASHINGTON':'WA','WEST VIRGINIA':'WV','WISCONSIN':'WI',
+    'WYOMING':'WY'
+}
+SKIP_PARAS = {
+    'NEW UPDATES','ONGOING/GENERAL COURT DELAYS','DEAR CLIENT PARTNERS,',
+    'SINCERELY,','PLEASE LET US KNOW','IT\'S AN HONOR','THANK YOU',
+}
+
+def summarize_desc(text, max_chars=280):
+    """Take the first 1-2 sentences, cap at max_chars."""
+    if len(text) <= max_chars:
+        return text
+    # Split on sentence endings
+    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+    out = ''
+    for sent in sentences:
+        if not out:
+            out = sent
+        elif len(out) + len(sent) + 1 <= max_chars:
+            out += ' ' + sent
+        else:
+            break
+    if len(out) > max_chars:
+        out = out[:max_chars-1].rsplit(' ', 1)[0] + '…'
+    return out
+
+def parse_desc_docx(raw_bytes):
+    """Parse Victig court delays Word doc -> list of (state_abbrev, county_name_or_None, description)"""
+    import zipfile, xml.etree.ElementTree as ET
+    with zipfile.ZipFile(io.BytesIO(raw_bytes)) as z:
+        xml_data = z.read('word/document.xml').decode('utf-8')
+    root = ET.fromstring(xml_data)
+    W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+    paras = []
+    for p in root.iter(f'{{{W}}}p'):
+        text = ''.join(r.text or '' for r in p.iter(f'{{{W}}}t')).strip()
+        if text: paras.append(text)
+
+    results = []   # (state_abbrev, county_or_None, description)
+    current_state = None
+
+    for para in paras:
+        upper = para.upper().strip()
+        if upper in SKIP_PARAS: continue
+        if upper in STATE_NAMES_FULL:
+            current_state = upper; continue
+        if not current_state: continue
+        state_ab = STATE_ABBREV.get(current_state)
+        if not state_ab: continue
+
+        # Skip obvious footer/intro lines
+        if any(skip in para.upper() for skip in SKIP_PARAS): continue
+        if len(para) < 30 and not re.search(r'[A-Z]{3,}', para): continue
+
+        # Extract county names — handle lists: "COCONINO, NAVAJO, PINAL and YAVAPAI COUNTIES"
+        counties = []
+        single = re.findall(r'\b([A-Z][A-Z\s]+?)\s+COUNTY\b', para)
+        if single:
+            counties = [c.strip() for c in single if 2 <= len(c.strip()) <= 40]
+        elif 'COUNTIES' in para.upper():
+            # Grab all words before COUNTIES: "COCONINO, NAVAJO, PINAL and YAVAPAI COUNTIES"
+            m = re.search(r'([A-Z][A-Z,\s]+?)\s+COUNTIES', para)
+            if m:
+                parts = re.split(r',|\band\b', m.group(1), flags=re.I)
+                counties = [p.strip() for p in parts if p.strip() and 2 <= len(p.strip()) <= 40]
+
+        desc = summarize_desc(para)
+
+        if counties:
+            for c in counties:
+                results.append((state_ab, c.strip(), desc))
+        elif len(para) > 60:  # state-level note
+            results.append((state_ab, None, desc))
+
+    return results
+
+@app.post("/admin/upload-desc-doc")
+async def upload_desc_doc(password: str, file: UploadFile = File(...)):
+    """Import a Word .docx descriptions document and update county descriptions."""
+    check_auth(password)
+    raw = await file.read()
+    name = (file.filename or '').lower()
+    if not name.endswith('.docx'):
+        raise HTTPException(status_code=400, detail='Upload a .docx Word document')
+
+    try:
+        entries = parse_desc_docx(raw)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f'Parse error: {e}')
+
+    with open(DATA_FILE) as f:
+        data = json.load(f)
+    counties = data['counties']
+
+    # Build reverse lookup: norm(state+name) -> fips
+    def norm(s): return re.sub(r'[^a-z]', '', s.lower())
+    lookup = {}
+    for fips, c in counties.items():
+        key = norm((c.get('state') or '') + (c.get('name') or ''))
+        lookup[key] = fips
+        lookup[norm(c.get('name') or '')] = fips
+
+    # Clear all previously doc-imported descriptions
+    cleared = 0
+    for fips, c in counties.items():
+        if c.get('_desc_doc'):
+            c['description'] = ''
+            del c['_desc_doc']
+            cleared += 1
+
+    # Apply new descriptions
+    updated, skipped = 0, []
+    for state_ab, county_name, desc in entries:
+        fips = None
+        if county_name:
+            key = norm(state_ab + county_name)
+            fips = lookup.get(key) or lookup.get(norm(county_name))
+        else:
+            # State-level: apply to all counties in state without a specific desc
+            for fp, c in counties.items():
+                if c.get('state') == state_ab and not c.get('description'):
+                    c['description'] = desc
+                    c['_desc_doc'] = True
+                    updated += 1
+            continue
+        if fips and fips in counties:
+            counties[fips]['description'] = desc
+            counties[fips]['_desc_doc'] = True
+            if counties[fips].get('status') == 'ok':
+                counties[fips]['status'] = 'delay'
+            updated += 1
+        else:
+            skipped.append(f'{state_ab}-{county_name}')
+
+    with open(DATA_FILE, 'w') as f:
+        json.dump(data, f)
+
+    msg = f'Updated {updated} counties, cleared {cleared} old entries.'
+    if skipped:
+        msg += f' Unmatched ({len(skipped)}): {", ".join(skipped[:8])}'
+    return {'ok': True, 'updated': updated, 'cleared': cleared,
+            'skipped': len(skipped), 'message': msg}
+
 @app.post("/admin/upload-descriptions")
 async def upload_descriptions(password: str, file: UploadFile = File(...)):
     """Import a CSV/Excel with jurisdiction + description columns."""
