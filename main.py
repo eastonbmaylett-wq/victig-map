@@ -63,7 +63,8 @@ async def block_raw_files(request: Request, call_next):
 # ── Public routes ─────────────────────────────────────────────────────────
 @app.get("/")
 def root():
-    return FileResponse(BASE / "index.html", media_type="text/html")
+    return FileResponse(BASE / "index.html", media_type="text/html",
+                        headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
 
 @app.get("/county-data.json")
 def get_data():
