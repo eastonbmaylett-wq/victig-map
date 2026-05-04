@@ -422,14 +422,8 @@ function drawMap(topo){
     .on('zoom',(event)=>{
       gSel.attr('transform',event.transform);
       const k = event.transform.k;
-      gSel.selectAll('.county:not(.pr-county)').attr('stroke-width', 0.3/k);
+      gSel.selectAll('.county').attr('stroke-width', 0.3/k);
       gSel.selectAll('.state-border').attr('stroke-width', 2/k);
-      // Counter-scale PR inset so it stays constant size while moving with map
-      const pg = gSel.select('.pr-inset');
-      if(!pg.empty()){
-        const t = pg.attr('transform').replace(/scale[^)]+\)/,'');
-        pg.attr('transform', t + ` scale(${1/k})`);
-      }
       placeMedalsOnMap(currentMedalData);
       closePopup();
     });
@@ -440,38 +434,57 @@ function drawMap(topo){
   document.getElementById('z-out').onclick   = ()=> svgSel.transition().call(svgZoom.scaleBy,0.625);
   document.getElementById('z-reset').onclick = ()=> svgSel.transition().call(svgZoom.transform,d3.zoomIdentity);
 
-  // ── Puerto Rico inset — inside gSel but counter-scaled so size stays constant ───
-  const prFeatures = topojson.feature(topo, {
-    type: 'GeometryCollection',
-    geometries: topo.objects.counties.geometries.filter(g => String(g.id).startsWith('72'))
+  // ── Puerto Rico inset — fixed HTML overlay, never moves with map ───────────────────
+  buildPRInset(topo, W, H);
+}
+
+function buildPRInset(topo, W, H){
+  const wrap = document.getElementById('map-wrap');
+  document.getElementById('pr-inset-div')?.remove();
+
+  const PW = Math.min(180, Math.round(W * 0.10));
+  const PH = Math.round(PW * 0.52);
+  // Fixed: bottom-right corner, above the legend area, clear of side panels
+  const div = document.createElement('div');
+  div.id = 'pr-inset-div';
+  Object.assign(div.style, {
+    position:'absolute', bottom:'12px', right:'12px',
+    width: PW+'px', height: PH+'px',
+    background:'white', border:'1px solid #bbb', borderRadius:'4px',
+    boxShadow:'0 1px 6px rgba(0,0,0,.1)', overflow:'hidden', pointerEvents:'auto',
+    zIndex:'60'
   });
-  if(prFeatures.features.length){
-    const PW = Math.round(W * 0.13), PH = Math.round(PW * 0.55);
-    // Anchor point in map-space (Gulf of Mexico, between TX and FL)
-    const PGX = W * 0.60, PGY = H * 0.87;
-    const prProj = d3.geoAlbers().rotate([66,0]).parallels([8,18]).fitSize([PW, PH], prFeatures);
-    const prPath = d3.geoPath().projection(prProj);
-    // Group anchored at Gulf coordinates; scale(1/k) keeps it constant-size on screen
-    const prG = gSel.append('g').attr('class','pr-inset')
-      .attr('transform', `translate(${PGX - PW/2},${PGY - PH/2})`);
-    prG.append('rect').attr('width',PW).attr('height',PH)
-      .attr('fill','white').attr('stroke','#aaa').attr('stroke-width',0.8).attr('rx',3);
-    prG.append('text').attr('x',4).attr('y',10)
-      .attr('font-size','8px').attr('fill','#888').attr('font-family','sans-serif')
-      .attr('font-weight','700').text('PUERTO RICO');
-    prG.selectAll('.pr-county').data(prFeatures.features).join('path')
-      .attr('class','county pr-county').attr('d', prPath)
-      .attr('fill', d => getFill(d.id)).attr('stroke','#e8e8e8').attr('stroke-width',0.4)
-      .on('mousemove', onHover)
-      .on('mouseleave', ()=> document.getElementById('tooltip').style.display='none')
-      .on('click', onCountyClick)
-      .each(function(d){ countyPaths[d.id] = this; });
-    const prMesh = topojson.mesh(topo,{
-      type:'GeometryCollection',
-      geometries:topo.objects.counties.geometries.filter(g=>String(g.id).startsWith('72'))
-    },(a,b)=>a!==b);
-    prG.append('path').datum(prMesh).attr('fill','none').attr('stroke','white').attr('stroke-width',0.6);
-  }
+  wrap.appendChild(div);
+
+  const lbl = document.createElement('div');
+  lbl.textContent = 'PUERTO RICO';
+  Object.assign(lbl.style, {
+    position:'absolute', top:'3px', left:'4px',
+    fontSize:'7px', fontWeight:'700', color:'#999',
+    fontFamily:'sans-serif', pointerEvents:'none', zIndex:'1'
+  });
+  div.appendChild(lbl);
+
+  const prFeatures = topojson.feature(topo, {
+    type:'GeometryCollection',
+    geometries: topo.objects.counties.geometries.filter(g=>String(g.id).startsWith('72'))
+  });
+  const prSvg = d3.select(div).append('svg').attr('width',PW).attr('height',PH);
+  const prProj = d3.geoAlbers().rotate([66,0]).parallels([8,18]).fitSize([PW,PH],prFeatures);
+  const prPath = d3.geoPath().projection(prProj);
+
+  prSvg.selectAll('path').data(prFeatures.features).join('path')
+    .attr('class','county pr-county').attr('d',prPath)
+    .attr('fill', d=>getFill(d.id)).attr('stroke','#e8e8e8').attr('stroke-width',0.4)
+    .on('mousemove', onHover)
+    .on('mouseleave', ()=>document.getElementById('tooltip').style.display='none')
+    .on('click', onCountyClick)
+    .each(function(d){ countyPaths[d.id]=this; });
+  const prMesh = topojson.mesh(topo,{
+    type:'GeometryCollection',
+    geometries:topo.objects.counties.geometries.filter(g=>String(g.id).startsWith('72'))
+  },(a,b)=>a!==b);
+  prSvg.append('path').datum(prMesh).attr('fill','none').attr('stroke','white').attr('stroke-width',0.6);
 }
 
 function zoomToBounds(bounds, W, H){
