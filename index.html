@@ -414,6 +414,7 @@ function drawMap(topo){
       const k = event.transform.k;
       gSel.selectAll('.county').attr('stroke-width', 0.3/k);
       gSel.selectAll('.state-border').attr('stroke-width', 2/k);
+      gSel.selectAll('.county-medal').attr('font-size', 14/k + 'px');
       closePopup();
     });
   svgSel.call(svgZoom);
@@ -593,7 +594,7 @@ function buildPanels(){
       <span class="rank-medal">${i<3?MEDALS[i]:''}</span>
       <span class="rank-num">${i>=3?i+1:''}</span>
       <div><div class="rank-name">${x.c.name}, ${x.c.state}</div>
-      <div class="rank-tat">${x.s.avg}d avg · ${x.s.count.toLocaleString()} searches</div></div>
+      <div class="rank-tat">${daysToReadable(x.s.avg)} avg &middot; ${x.s.count.toLocaleString()} searches</div></div>
     </div>`).join('');
 
   document.getElementById('panel-slowest').innerHTML = slowest.map((x,i)=>`
@@ -601,8 +602,34 @@ function buildPanels(){
       <span class="rank-medal">${i<3?['🔴','🟠','🟡'][i]:''}</span>
       <span class="rank-num">${i>=3?i+1:''}</span>
       <div><div class="rank-name">${x.c.name}, ${x.c.state}</div>
-      <div class="rank-tat">${x.s.avg}d avg · ${x.s.count.toLocaleString()} searches</div></div>
+      <div class="rank-tat">${daysToReadable(x.s.avg)} avg &middot; ${x.s.count.toLocaleString()} searches</div></div>
     </div>`).join('');
+
+  // Draw medal labels on the map over top-3 fastest counties
+  placeMedalsOnMap(fastest.slice(0,3));
+}
+
+function placeMedalsOnMap(top3){
+  if(!gSel || !pathFn) return;
+  // Remove old medals
+  gSel.selectAll('.county-medal').remove();
+  top3.forEach((x, i) => {
+    const el = countyPaths[x.fips];
+    if(!el) return;
+    const d = d3.select(el).datum();
+    if(!d) return;
+    const [cx, cy] = pathFn.centroid(d);
+    if(!cx || !cy || isNaN(cx) || isNaN(cy)) return;
+    gSel.append('text')
+      .attr('class','county-medal')
+      .attr('x', cx)
+      .attr('y', cy + 5)
+      .attr('text-anchor','middle')
+      .attr('font-size','14px')
+      .attr('pointer-events','none')
+      .attr('style','user-select:none')
+      .text(MEDALS[i]);
+  });
 }
 
 function togglePanel(which){
