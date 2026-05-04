@@ -187,10 +187,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
              ondrop="handleDrop(event)">
           <div class="icon">📂</div>
           <strong id="drop-filename">Drop CSV here or click to browse</strong>
-          <p>Drag & drop or click to select</p>
+          <p>CSV or Excel (.xlsx) — drag & drop or click</p>
         </div>
         <div class="upload-hint">Export from IS/TazWorks going back <b>6 months</b> for full coverage (3 months minimum). All period filters update automatically.</div>
-        <input type="file" id="file-input" accept=".csv" onchange="handleFile(this.files[0])">
+        <input type="file" id="file-input" accept=".csv,.xlsx" onchange="handleFile(this.files[0])">
         <div id="import-status"></div>
         <button id="import-btn" onclick="doImport()">⬆ Upload & Update Map</button>
       </div>
@@ -569,7 +569,7 @@ function handleDrop(e){
   handleFile(e.dataTransfer.files[0]);
 }
 function handleFile(file){
-  if(!file?.name.endsWith('.csv')){ setImportStatus('Please select a CSV file.','err'); return; }
+  if(!file || (!file.name.endsWith('.csv') && !file.name.endsWith('.xlsx'))){ setImportStatus('Please select a CSV or Excel file.','err'); return; }
   pendingFile = file;
   document.getElementById('drop-filename').textContent = file.name;
   document.getElementById('import-btn').style.display = 'block';

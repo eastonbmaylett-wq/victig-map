@@ -1,7 +1,7 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
-import subprocess, shutil, os, hashlib, json
+import subprocess, shutil, os, hashlib, json, csv, io
 from pathlib import Path
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)  # disable API docs
@@ -136,21 +136,60 @@ async def update_county(payload: dict):
 @app.post("/admin/upload")
 async def upload_csv(password: str, file: UploadFile = File(...)):
     check_auth(password)
-    if not file.filename.endswith(".csv"):
-        raise HTTPException(status_code=400, detail="CSV files only")
-    # Save to a temp path outside the web root
+    name = file.filename or ""
+    if not (name.endswith(".csv") or name.endswith(".xlsx")):
+        raise HTTPException(status_code=400, detail="CSV or Excel (.xlsx) files only")
+
+    raw = await file.read()
     tmp = Path("/tmp/victig_upload.csv")
-    with open(tmp, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+
+    if name.endswith(".xlsx"):
+        # Convert Excel → CSV
+        try:
+            import openpyxl
+            wb = openpyxl.load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+            ws = wb.active
+            rows = list(ws.iter_rows(values_only=True))
+            with open(tmp, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                for row in rows:
+                    writer.writerow(["" if v is None else str(v) for v in row])
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Excel parse error: {e}")
+    else:
+        with open(tmp, "wb") as f:
+            f.write(raw)
+
     result = subprocess.run(
         ["python3", str(BASE / "process.py"), str(tmp)],
         capture_output=True, text=True, cwd=str(BASE)
     )
     tmp.unlink(missing_ok=True)
     if result.returncode != 0:
-        err = (result.stderr or result.stdout or 'Unknown error')[:800]
+        err = (result.stderr or result.stdout or "Unknown error")[:800]
         raise HTTPException(status_code=500, detail=err)
     return {"ok": True, "message": result.stdout.strip() or "Map data updated successfully"}
+
+@app.post("/admin/preview-columns")
+async def preview_columns(password: str, file: UploadFile = File(...)):
+    """Return the column headers + first 3 rows of an uploaded file without processing it."""
+    check_auth(password)
+    name = file.filename or ""
+    raw = await file.read()
+    rows = []
+    try:
+        if name.endswith(".xlsx"):
+            import openpyxl
+            wb = openpyxl.load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+            ws = wb.active
+            rows = [list(r) for r in list(ws.iter_rows(values_only=True))[:6]]
+        else:
+            text = raw.decode("utf-8-sig", errors="replace")
+            reader = csv.reader(io.StringIO(text))
+            rows = [r for _, r in zip(range(6), reader)]
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"rows": rows}
 
 @app.post("/admin/update-state")
 async def update_state(payload: dict):
