@@ -515,7 +515,6 @@ function onCountyClick(event, d){
         <div><div class="p-lbl">Avg TAT</div><div class="p-val">${daysToReadable(s.avg)}</div></div>
         <div><div class="p-lbl">Max TAT</div><div class="p-val">${daysToReadable(s.max)}</div></div>
         <div><div class="p-lbl">Min TAT</div><div class="p-val">${daysToReadable(s.min)}</div></div>
-        <div><div class="p-lbl">Searches</div><div class="p-val">${s.count.toLocaleString()}</div></div>
       </div>
       ${rankPct !== null ? `<div class="p-rank">Faster than <strong>${rankPct}%</strong> of all US counties (#${s.rank} of 3,231)</div>` : ''}
       ${c.precomp?.gt2weeks ? `<div style="font-size:10px;color:#de7612;margin-top:4px">⚠ ${c.precomp.gt2weeks} search${c.precomp.gt2weeks!==1?'es':''} exceeded 2 weeks</div>` : ''}
@@ -646,7 +645,7 @@ function buildPanels(){
       <span class="rank-medal">${i<3?MEDALS[i]:''}</span>
       <span class="rank-num">${i>=3?i+1:''}</span>
       <div><div class="rank-name">${x.c.name}, ${x.c.state}</div>
-      <div class="rank-tat">${daysToReadable(x.s.avg)} avg &middot; ${x.s.count.toLocaleString()} searches</div></div>
+      <div class="rank-tat">${daysToReadable(x.s.avg)} avg</div></div>
     </div>`).join('');
 
   document.getElementById('panel-slowest').innerHTML = slowest.map((x,i)=>`
@@ -654,7 +653,7 @@ function buildPanels(){
       <span class="rank-medal">${i<3?['🔴','🟠','🟡'][i]:''}</span>
       <span class="rank-num">${i>=3?i+1:''}</span>
       <div><div class="rank-name">${x.c.name}, ${x.c.state}</div>
-      <div class="rank-tat">${daysToReadable(x.s.avg)} avg &middot; ${x.s.count.toLocaleString()} searches</div></div>
+      <div class="rank-tat">${daysToReadable(x.s.avg)} avg</div></div>
     </div>`).join('');
 
   // Draw medal labels on the map over top-3 fastest counties
