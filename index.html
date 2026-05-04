@@ -434,48 +434,60 @@ function drawMap(topo){
   document.getElementById('z-out').onclick   = ()=> svgSel.transition().call(svgZoom.scaleBy,0.625);
   document.getElementById('z-reset').onclick = ()=> svgSel.transition().call(svgZoom.transform,d3.zoomIdentity);
 
-  // ── Puerto Rico inset (fixed, outside zoom group) ──────────────────────────
+  // ── Puerto Rico inset — HTML overlay (immune to SVG zoom/pan) ───────────────────
+  drawPRInset(topo);
+}
+
+function drawPRInset(topo){
+  const wrap = document.getElementById('map-wrap');
+  const W = wrap.clientWidth, H = wrap.clientHeight;
+  const PW = Math.round(W * 0.13), PH = Math.round(PW * 0.55);
+  const PX = Math.round(W * 0.64 - PW / 2);
+  const PY = H - PH - 2;
+
+  // Remove existing inset
+  const existing = document.getElementById('pr-inset-div');
+  if(existing) existing.remove();
+
+  // Create HTML div overlay — completely outside SVG, never affected by zoom
+  const div = document.createElement('div');
+  div.id = 'pr-inset-div';
+  div.style.cssText = `position:absolute;left:${PX}px;top:${PY}px;width:${PW}px;height:${PH}px;
+    background:white;border:1px solid #bbb;border-radius:4px;
+    box-shadow:0 1px 6px rgba(0,0,0,.1);pointer-events:auto;overflow:hidden;`;
+  wrap.appendChild(div);
+
+  // Label
+  const lbl = document.createElement('div');
+  lbl.textContent = 'PUERTO RICO';
+  lbl.style.cssText = 'position:absolute;top:3px;left:5px;font-size:8px;font-weight:700;color:#888;font-family:sans-serif;pointer-events:none;z-index:1';
+  div.appendChild(lbl);
+
+  // SVG inside the div
   const prFeatures = topojson.feature(topo, {
     type: 'GeometryCollection',
     geometries: topo.objects.counties.geometries.filter(g => String(g.id).startsWith('72'))
   });
-  if(prFeatures.features.length) {
-    const PW = Math.round(W * 0.13), PH = Math.round(PW * 0.55);
-    // Gulf of Mexico white space — bottom edge between TX and FL coasts
-    const PX = Math.round(W * 0.64 - PW / 2);
-    const PY = H - PH - 2; // flush to bottom edge = ocean/gulf space
-    const prProj = d3.geoAlbers().rotate([66,0]).parallels([8,18]).fitSize([PW, PH], prFeatures);
-    const prPath = d3.geoPath().projection(prProj);
-    const prG = svgSel.append('g').attr('class','pr-inset').attr('transform',`translate(${PX},${PY})`);
-    // White background box — locks visually over ocean space
-    prG.append('rect').attr('width',PW).attr('height',PH)
-      .attr('fill','white').attr('stroke','#bbb').attr('stroke-width',1).attr('rx',4)
-      .attr('filter','url(#pr-shadow)');
-    // Drop shadow filter
-    const defs = svgSel.select('defs').empty() ? svgSel.append('defs') : svgSel.select('defs');
-    const flt = defs.append('filter').attr('id','pr-shadow');
-    flt.append('feDropShadow').attr('dx',0).attr('dy',1).attr('stdDeviation',2).attr('flood-opacity',0.12);
-    // Label
-    prG.append('text').attr('x',5).attr('y',12)
-      .attr('font-size','9px').attr('fill','#888').attr('font-family','sans-serif')
-      .attr('font-weight','600').text('PUERTO RICO');
-    // Counties
-    prG.selectAll('.pr-county').data(prFeatures.features).join('path')
-      .attr('class','county pr-county')
-      .attr('d', prPath)
-      .attr('fill', d => getFill(d.id))
-      .attr('stroke','#e8e8e8').attr('stroke-width',0.5)
-      .on('mousemove', onHover)
-      .on('mouseleave', ()=> document.getElementById('tooltip').style.display='none')
-      .on('click', onCountyClick)
-      .each(function(d){ countyPaths[d.id] = this; });
-    // State border
-    const prMesh = topojson.mesh(topo, {
-      type:'GeometryCollection',
-      geometries: topo.objects.counties.geometries.filter(g=>String(g.id).startsWith('72'))
-    }, (a,b)=>a!==b);
-    prG.append('path').datum(prMesh).attr('fill','none').attr('stroke','white').attr('stroke-width',1);
-  }
+  const prSvg = d3.select(div).append('svg').attr('width', PW).attr('height', PH);
+  const prProj = d3.geoAlbers().rotate([66,0]).parallels([8,18]).fitSize([PW, PH], prFeatures);
+  const prPath = d3.geoPath().projection(prProj);
+
+  prSvg.selectAll('path')
+    .data(prFeatures.features).join('path')
+    .attr('class','county pr-county')
+    .attr('d', prPath)
+    .attr('fill', d => getFill(d.id))
+    .attr('stroke','#e8e8e8').attr('stroke-width',0.5)
+    .on('mousemove', onHover)
+    .on('mouseleave', ()=> document.getElementById('tooltip').style.display='none')
+    .on('click', onCountyClick)
+    .each(function(d){ countyPaths[d.id] = this; });
+
+  const prMesh = topojson.mesh(topo, {
+    type:'GeometryCollection',
+    geometries: topo.objects.counties.geometries.filter(g=>String(g.id).startsWith('72'))
+  }, (a,b)=>a!==b);
+  prSvg.append('path').datum(prMesh).attr('fill','none').attr('stroke','white').attr('stroke-width',0.8);
 }
 
 function zoomToBounds(bounds, W, H){
@@ -622,6 +634,9 @@ function refreshColors(){
   d3.selectAll('.county')
     .attr('fill',    d=> getFill(d.id))
     .attr('opacity', d=> dimmed(d.id) ? 0.2 : 1);
+  // Refresh PR inset colors too
+  d3.selectAll('.pr-county')
+    .attr('fill', d => getFill(d.id));
 }
 
 // ── Badge ─────────────────────────────────────────────────────────────────
