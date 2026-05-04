@@ -557,9 +557,9 @@ function onCountyClick(event, d){
     const rankPct = s.rank ? Math.round((1-s.rank/s.total)*100) : null;
     statsHtml = `
       <div class="p-grid">
-        <div><div class="p-lbl">Avg TAT</div><div class="p-val">${daysToReadable(s.avg)}</div></div>
-        <div><div class="p-lbl">Max TAT</div><div class="p-val">${daysToReadable(s.max)}</div></div>
-        <div><div class="p-lbl">Min TAT</div><div class="p-val">${daysToReadable(s.min)}</div></div>
+        <div><div class="p-lbl">Avg TAT</div><div class="p-val">${c._overrides?.avg || daysToReadable(s.avg)}</div></div>
+        <div><div class="p-lbl">Max TAT</div><div class="p-val">${c._overrides?.max || daysToReadable(s.max)}</div></div>
+        <div><div class="p-lbl">Min TAT</div><div class="p-val">${c._overrides?.min || daysToReadable(s.min)}</div></div>
       </div>
       ${rankPct !== null ? `<div class="p-rank">Faster than <strong>${rankPct}%</strong> of all US counties (#${s.rank} of 3,231)</div>` : ''}
       ${c.precomp?.gt2weeks ? `<div style="font-size:10px;color:#de7612;margin-top:4px">⚠ ${c.precomp.gt2weeks} search${c.precomp.gt2weeks!==1?'es':''} exceeded 2 weeks</div>` : ''}
@@ -575,7 +575,7 @@ function onCountyClick(event, d){
       <div class="p-latest-title">Most Recent Search</div>
       <div class="p-latest-row"><span class="p-latest-lbl">Started</span><span>${c.latest.date}</span></div>
       ${c.latest.completion ? `<div class="p-latest-row"><span class="p-latest-lbl">Completed</span><span>${c.latest.completion}</span></div>` : ''}
-      <div class="p-latest-row"><span class="p-latest-lbl">TAT</span><span><b>${daysToReadable(c.latest.tat)}</b></span></div>
+      <div class="p-latest-row"><span class="p-latest-lbl">TAT</span><span><b>${c._overrides?.latest_tat || daysToReadable(c.latest.tat)}</b></span></div>
       <div class="p-latest-row"><span class="p-latest-lbl">Type</span><span>${c.latest.search}</span></div>
     </div>` : '';
 

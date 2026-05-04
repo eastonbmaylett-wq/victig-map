@@ -146,6 +146,13 @@ async def update_county(payload: dict):
     data["counties"][fips]["status"]          = status
     data["counties"][fips]["description"]     = description
     data["counties"][fips]["_admin_override"] = True
+    # Store manual stat overrides (strip empty strings)
+    overrides = payload.get("overrides", {})
+    clean_ov = {k: v for k, v in overrides.items() if v}
+    if clean_ov:
+        data["counties"][fips]["_overrides"] = clean_ov
+    elif "_overrides" in data["counties"][fips]:
+        del data["counties"][fips]["_overrides"]
     with open(DATA_FILE, "w") as f:
         json.dump(data, f)
     return {"ok": True}

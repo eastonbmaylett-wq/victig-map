@@ -91,7 +91,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 
 /* Edit panel — slides up from bottom */
 #edit-panel{flex-shrink:0;background:white;border-top:2px solid #1a2b45;padding:16px 20px;max-height:0;overflow:hidden;transition:max-height .25s ease}
-#edit-panel.open{max-height:280px}
+#edit-panel.open{max-height:500px}
 #edit-panel-inner{display:flex;gap:20px;align-items:flex-start}
 #edit-left{flex:1;min-width:0}
 #edit-right{flex:1;min-width:0}
@@ -338,6 +338,36 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
             <div class="form-hint">Shown publicly when someone clicks this county.</div>
           </div>
         </div>
+
+        <!-- TAT overrides -->
+        <div style="border-top:1px solid #f0f0f0;padding-top:12px;margin-top:4px">
+          <div style="font-size:11px;font-weight:700;color:#1a2b45;margin-bottom:8px;text-transform:uppercase;letter-spacing:.3px">✏️ Override Popup Stats <span style="font-weight:400;color:#aaa">(leave blank to use calculated values)</span></div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:10px">
+            <div>
+              <label class="form-label">Avg TAT</label>
+              <input id="ov-avg" type="text" placeholder="e.g. 2h 15m or 1.5" style="width:100%;padding:5px 8px;border:1.5px solid #ddd;border-radius:5px;font-size:12px">
+            </div>
+            <div>
+              <label class="form-label">Max TAT</label>
+              <input id="ov-max" type="text" placeholder="e.g. 14d or 336h" style="width:100%;padding:5px 8px;border:1.5px solid #ddd;border-radius:5px;font-size:12px">
+            </div>
+            <div>
+              <label class="form-label">Min TAT</label>
+              <input id="ov-min" type="text" placeholder="e.g. 4h 30m" style="width:100%;padding:5px 8px;border:1.5px solid #ddd;border-radius:5px;font-size:12px">
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div>
+              <label class="form-label">Most Recent TAT</label>
+              <input id="ov-latest-tat" type="text" placeholder="e.g. 3h 20m" style="width:100%;padding:5px 8px;border:1.5px solid #ddd;border-radius:5px;font-size:12px">
+            </div>
+            <div>
+              <label class="form-label">Most Recent Date</label>
+              <input id="ov-latest-date" type="text" placeholder="e.g. May 3, 2026" style="width:100%;padding:5px 8px;border:1.5px solid #ddd;border-radius:5px;font-size:12px">
+            </div>
+          </div>
+        </div>
+
         <div id="edit-actions">
           <button id="save-btn" onclick="saveCounty()">Save Changes</button>
           <button id="close-edit" onclick="closeEdit()">Cancel</button>
@@ -482,6 +512,13 @@ function selectCounty(fips){
   document.getElementById('edit-status').value = c.status || 'ok';
   document.getElementById('edit-desc').value = c.description || '';
   document.getElementById('save-status').textContent = '';
+  // Populate override fields with existing overrides (if any)
+  const ov = c._overrides || {};
+  document.getElementById('ov-avg').value         = ov.avg || '';
+  document.getElementById('ov-max').value         = ov.max || '';
+  document.getElementById('ov-min').value         = ov.min || '';
+  document.getElementById('ov-latest-tat').value  = ov.latest_tat || '';
+  document.getElementById('ov-latest-date').value = ov.latest_date || '';
   document.getElementById('edit-panel').classList.add('open');
   document.getElementById('map-hint').style.display = 'none';
 
@@ -540,7 +577,14 @@ async function saveCounty(){
       res = await fetch('/admin/update-county', {
         method: 'POST',
         headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({password:token, fips:selectedFips, status, description})
+        body: JSON.stringify({password:token, fips:selectedFips, status, description,
+          overrides: {
+            avg:         document.getElementById('ov-avg').value.trim(),
+            max:         document.getElementById('ov-max').value.trim(),
+            min:         document.getElementById('ov-min').value.trim(),
+            latest_tat:  document.getElementById('ov-latest-tat').value.trim(),
+            latest_date: document.getElementById('ov-latest-date').value.trim(),
+          }})
       });
       data = await res.json();
       if(res.ok){
