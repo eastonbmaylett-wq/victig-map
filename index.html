@@ -523,7 +523,7 @@ function onCountyClick(event, d){
     perfHtml = `<div style="font-size:11px;margin-bottom:8px;color:#555">Search Time: <strong style="color:${color}">${label}</strong></div>`;
   }
 
-  let statsHtml = `<div class="p-nodata">No recent search data for this period</div>`;
+  let statsHtml = '';
   if(s){
     const rankPct = s.rank ? Math.round((1-s.rank/s.total)*100) : null;
     statsHtml = `
