@@ -140,10 +140,11 @@ async def upload_csv(password: str, file: UploadFile = File(...)):
         ["python3", str(BASE / "process.py"), str(tmp)],
         capture_output=True, text=True, cwd=str(BASE)
     )
-    tmp.unlink(missing_ok=True)  # delete immediately after processing
+    tmp.unlink(missing_ok=True)
     if result.returncode != 0:
-        raise HTTPException(status_code=500, detail=result.stderr[:500])
-    return {"ok": True, "message": "Map data updated successfully"}
+        err = (result.stderr or result.stdout or 'Unknown error')[:800]
+        raise HTTPException(status_code=500, detail=err)
+    return {"ok": True, "message": result.stdout.strip() or "Map data updated successfully"}
 
 @app.get("/api/version")
 def version():

@@ -54,14 +54,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 #import-btn:hover{background:#253d61}
 .status-ok{color:#155724} .status-err{color:#721c24} .status-loading{color:#856404}
 
-/* Flagged list */
-#flagged-section{flex:1;overflow:hidden;display:flex;flex-direction:column;padding:12px 16px 0}
-#flagged-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-shrink:0}
-#flagged-header h2{font-size:12px;font-weight:600;color:#1a2b45;text-transform:uppercase;letter-spacing:.4px}
-#flagged-count-badge{background:#cf4027;color:white;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700}
-#flagged-search{width:100%;padding:5px 9px;border-radius:6px;border:1.5px solid #ddd;font-size:12px;margin-bottom:8px;flex-shrink:0}
-#flagged-search:focus{outline:none;border-color:#1a2b45}
-#flagged-list{flex:1;overflow-y:auto;margin:0 -16px;padding:0 16px 12px}
+/* County list */
+#list-section{flex:1;overflow:hidden;display:flex;flex-direction:column;padding:10px 16px 0}
+#mode-tabs{display:flex;gap:4px;margin-bottom:8px;flex-shrink:0}
+.mode-tab{flex:1;padding:5px 6px;border:1.5px solid #e0e4ea;border-radius:6px;background:#f8f9fb;font-size:11px;font-weight:600;color:#555;cursor:pointer;text-align:center;transition:all .1s}
+.mode-tab.active{background:#1a2b45;color:white;border-color:#1a2b45}
+#list-search{width:100%;padding:5px 9px;border-radius:6px;border:1.5px solid #ddd;font-size:12px;margin-bottom:6px;flex-shrink:0}
+#list-search:focus{outline:none;border-color:#1a2b45}
+#list-meta{font-size:10px;color:#aaa;margin-bottom:6px;flex-shrink:0}
+#county-list{flex:1;overflow-y:auto;margin:0 -16px;padding:0 16px 12px}
 .flag-row{padding:7px 9px;border-radius:6px;cursor:pointer;border-bottom:1px solid #f5f5f5;transition:background .1s}
 .flag-row:hover{background:#f5f7ff}
 .flag-row.selected{background:#eef2ff;border-left:3px solid #1a2b45;padding-left:6px}
@@ -147,13 +148,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
         <button id="import-btn" onclick="doImport()">⬆ Upload & Update Map</button>
       </div>
 
-      <div id="flagged-section">
-        <div id="flagged-header">
-          <h2>🚩 Flagged Counties</h2>
-          <span id="flagged-count-badge">0</span>
+      <div id="list-section">
+        <div id="mode-tabs">
+          <button class="mode-tab active" id="tab-flagged" onclick="setMode('flagged')">🚩 Flagged (<span id="flagged-count">0</span>)</button>
+          <button class="mode-tab" id="tab-all" onclick="setMode('all')">🔍 All Counties</button>
         </div>
-        <input type="text" id="flagged-search" placeholder="Search counties…" oninput="filterFlagged()">
-        <div id="flagged-list"></div>
+        <input type="text" id="list-search" placeholder="Search counties…" oninput="filterList()">
+        <div id="list-meta"></div>
+        <div id="county-list"></div>
       </div>
     </div>
 
@@ -211,8 +213,9 @@ const STATUS_BADGE = {
 };
 
 let token = sessionStorage.getItem('victig_admin_token') || '';
-let counties = {}, allFlagged = [], selectedFips = null, pendingFile = null;
+let counties = {}, allFlagged = [], allCountiesList = [], selectedFips = null, pendingFile = null;
 let svgSel, countyPaths = {}, topoData;
+let listMode = 'flagged'; // 'flagged' | 'all'
 
 // ── Auth ──────────────────────────────────────────────────────────────────
 async function sha256(str){
@@ -252,7 +255,7 @@ async function loadAll(){
       `Data: ${fmt(min)} – ${fmt(max)} · Upload new CSV to refresh`;
   }
 
-  buildFlaggedList();
+  buildLists();
   drawMap(topo);
 }
 
@@ -356,12 +359,12 @@ async function saveCounty(){
     if(res.ok){
       counties[selectedFips].status = status;
       counties[selectedFips].description = description;
-      saveEl.textContent = '✓ Saved'; saveEl.className = 'save-ok';
+      saveEl.textContent = '✓ Saved — live on public map'; saveEl.className = 'save-ok';
       // Update map color live
       if(countyPaths[selectedFips])
         d3.select(countyPaths[selectedFips]).attr('fill', getFill(selectedFips));
-      buildFlaggedList();
-      setTimeout(() => saveEl.textContent = '', 2500);
+      buildLists();
+      setTimeout(() => saveEl.textContent = '', 3500);
     } else {
       saveEl.textContent = data.detail || 'Error'; saveEl.className = 'save-err';
     }
@@ -370,29 +373,47 @@ async function saveCounty(){
   }
 }
 
-// ── Flagged list ──────────────────────────────────────────────────────────
-function buildFlaggedList(){
+// ── Lists ─────────────────────────────────────────────────────────────────
+function buildLists(){
+  const order = {significant:0,high_tat:1,delay:2};
   allFlagged = Object.entries(counties)
     .filter(([,c]) => c.status && c.status !== 'ok')
-    .sort((a,b) => ({'significant':0,'high_tat':1,'delay':2}[a[1].status]||9) - ({'significant':0,'high_tat':1,'delay':2}[b[1].status]||9));
-  document.getElementById('flagged-count-badge').textContent = allFlagged.length;
-  renderFlagged(allFlagged);
+    .sort((a,b) => (order[a[1].status]||9)-(order[b[1].status]||9));
+  allCountiesList = Object.entries(counties)
+    .sort((a,b) => (a[1].state||'').localeCompare(b[1].state||'') || (a[1].name||'').localeCompare(b[1].name||''));
+  document.getElementById('flagged-count').textContent = allFlagged.length;
+  renderList();
 }
 
-function renderFlagged(list){
-  document.getElementById('flagged-list').innerHTML = list.map(([fips,c]) => {
+function setMode(mode){
+  listMode = mode;
+  document.getElementById('tab-flagged').classList.toggle('active', mode==='flagged');
+  document.getElementById('tab-all').classList.toggle('active', mode==='all');
+  document.getElementById('list-search').value = '';
+  renderList();
+}
+
+function filterList(){ renderList(); }
+
+function renderList(){
+  const q = document.getElementById('list-search').value.toLowerCase();
+  const src = listMode === 'flagged' ? allFlagged : allCountiesList;
+  const filtered = q ? src.filter(([,c]) => c.name?.toLowerCase().includes(q) || c.state?.toLowerCase().includes(q)) : src;
+  const meta = document.getElementById('list-meta');
+  meta.textContent = listMode === 'flagged'
+    ? `${filtered.length} flagged counties`
+    : `${filtered.length.toLocaleString()} of ${allCountiesList.length.toLocaleString()} counties${q ? ' matched' : ''}`;
+  document.getElementById('county-list').innerHTML = filtered.slice(0,200).map(([fips,c]) => {
     const b = STATUS_BADGE[c.status] || {};
+    const badge = c.status && c.status !== 'ok'
+      ? `<span class="flag-badge" style="background:${b.bg};color:${b.fg}">${b.label||c.status}</span>` : '';
     return `<div class="flag-row${fips===selectedFips?' selected':''}" data-fips="${fips}" onclick="selectCounty('${fips}')">
-      <div><span class="flag-name">${c.name}, ${c.state}</span>
-        <span class="flag-badge" style="background:${b.bg};color:${b.fg}">${b.label||c.status}</span></div>
-      <div class="flag-desc">${c.description||'No description set'}</div>
+      <div><span class="flag-name">${c.name}, ${c.state}</span>${badge}</div>
+      <div class="flag-desc">${c.description||''}</div>
     </div>`;
   }).join('');
-}
-
-function filterFlagged(){
-  const q = document.getElementById('flagged-search').value.toLowerCase();
-  renderFlagged(allFlagged.filter(([,c]) => c.name?.toLowerCase().includes(q) || c.state?.toLowerCase().includes(q)));
+  if(filtered.length > 200) document.getElementById('county-list').innerHTML +=
+    `<div style="padding:8px;font-size:11px;color:#aaa;text-align:center">Showing first 200 — type to narrow down</div>`;
 }
 
 // ── CSV Import ────────────────────────────────────────────────────────────
@@ -418,7 +439,7 @@ async function doImport(){
     const res = await fetch(`/admin/upload?password=${encodeURIComponent(token)}`, {method:'POST',body:form});
     const data = await res.json();
     if(res.ok){
-      setImportStatus('✓ Map updated! Reloading data…','ok');
+      setImportStatus('✓ ' + (data.message || 'Map updated!') + ' Reloading…','ok');
       setTimeout(()=>{ loadAll(); document.getElementById('import-btn').disabled=false; pendingFile=null; document.getElementById('drop-filename').textContent='Drop CSV here or click to browse'; document.getElementById('import-btn').style.display='none'; },1500);
     } else {
       setImportStatus('Error: '+(data.detail||'Upload failed'),'err');
