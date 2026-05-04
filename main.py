@@ -149,7 +149,7 @@ async def upload_csv(password: str, file: UploadFile = File(...)):
             with open(tmp, "w", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
                 for row in rows:
-                    writer.writerow(["” if v is None else str(v) for v in row])
+                    writer.writerow(["" if v is None else str(v) for v in row])
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Excel parse error: {e}")
     elif name.endswith(".xls"):
