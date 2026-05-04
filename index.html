@@ -444,12 +444,10 @@ function buildPRInset(topo, W, H){
 
   const PW = Math.min(180, Math.round(W * 0.10));
   const PH = Math.round(PW * 0.52);
-  // Flush to bottom edge between TX and FL — ocean space, no state overlap
-  const left = Math.round(W * 0.61 - PW / 2);
   const div = document.createElement('div');
   div.id = 'pr-inset-div';
   Object.assign(div.style, {
-    position:'absolute', left:left+'px', bottom:'6px',
+    position:'absolute', bottom:'12px', right:'12px',
     width: PW+'px', height: PH+'px',
     background:'white', border:'1px solid #bbb', borderRadius:'4px',
     boxShadow:'0 1px 6px rgba(0,0,0,.1)', overflow:'hidden', pointerEvents:'auto',
