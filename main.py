@@ -74,6 +74,30 @@ def get_data():
         headers={"Cache-Control": "no-cache"}
     )
 
+@app.get("/counties-10m.json")
+def get_topo():
+    return FileResponse(
+        BASE / "counties-10m.json",
+        media_type="application/json",
+        headers={"Cache-Control": "public, max-age=86400"}
+    )
+
+@app.get("/d3.min.js")
+def get_d3():
+    return FileResponse(
+        BASE / "d3.min.js",
+        media_type="application/javascript",
+        headers={"Cache-Control": "public, max-age=86400"}
+    )
+
+@app.get("/topojson-client.min.js")
+def get_topojson():
+    return FileResponse(
+        BASE / "topojson-client.min.js",
+        media_type="application/javascript",
+        headers={"Cache-Control": "public, max-age=86400"}
+    )
+
 
 # ── Admin routes (password required for all writes) ───────────────────────
 @app.get("/admin")
