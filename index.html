@@ -490,11 +490,21 @@ function onCountyClick(event, d){
       ${c.latest.client ? `<div class="p-latest-row"><span class="p-latest-lbl">Client</span><span style="font-size:10px">${c.latest.client}</span></div>` : ''}
     </div>` : '';
 
+  const outHtml = (c.outliers && c.outliers.length) ? `
+    <div class="p-latest" style="border-top:1px solid #f0f0f0;margin-top:8px;padding-top:8px">
+      <div class="p-latest-title" style="color:#cf4027">⚠ Outlier Searches (${c.outliers.length})</div>
+      ${c.outliers.slice(0,3).map(o=>`
+        <div class="p-latest-row" style="margin-top:4px">
+          <span class="p-latest-lbl">${o.tat ? Math.round(o.tat)+'d' : '?'}</span>
+          <span style="font-size:10px">${o.reason}${o.client?' — '+o.client:''}</span>
+        </div>`).join('')}
+    </div>` : '';
+
   document.getElementById('popup-body').innerHTML = `
     <h3>${c.name} County, ${c.state}</h3>
     <span class="p-badge" style="background:${sc.badge};color:${sc.text}">${sc.label}</span>
     ${perfHtml}
-    ${statsHtml}${latestHtml}${descHtml}
+    ${statsHtml}${outHtml}${latestHtml}${descHtml}
 `;
 
   const popup = document.getElementById('popup');

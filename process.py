@@ -102,6 +102,7 @@ COL_START    = col('start date/time')
 COL_COMPLETE = col('completion date/time')
 COL_SNAME    = col('search name')
 COL_CLIENT   = col('client name')
+COL_CAND     = col('candidate name')
 COL_FILE     = col('file #')
 
 # New pre-computed aggregate columns
@@ -159,9 +160,10 @@ for raw in raw_rows[1:]:
         comp_str = get(COL_COMPLETE) if COL_COMPLETE else ''
         latest[jur] = {
             'dt': dt, 'tat': tat, 'search': search,
-            'client': get(COL_CLIENT),
+            'client':     get(COL_CLIENT),
+            'candidate':  get(COL_CAND) if COL_CAND is not None else '',
             'completion': comp_str,
-            'file_num': get(COL_FILE),
+            'file_num':   get(COL_FILE),
         }
 
 if not rows:
@@ -221,8 +223,39 @@ for j, v in latest.items():
         'search':     v['search'],
         'completion': v['completion'],
         'client':     v['client'],
+        'candidate':  v.get('candidate',''),
         'file_num':   v['file_num'],
     }
+
+# ── Parse Outliers sheet (if Excel with multiple sheets) ─────────────────
+# Maps jurisdiction -> list of {tat, reason, search, client}
+outliers_by_jur = defaultdict(list)
+if suffix in ('.xlsx', '.xlsm'):
+    try:
+        import openpyxl as _opx
+        _wb = _opx.load_workbook(str(IN_FILE), read_only=True, data_only=True)
+        _ws = None
+        for _sn in _wb.sheetnames:
+            if 'outlier' in _sn.lower(): _ws = _wb[_sn]; break
+        if _ws:
+            _rows = list(_ws.iter_rows(values_only=True))
+            _hdr  = {str(h).strip().lower(): i for i,h in enumerate(_rows[0]) if h}
+            def _g(row, key):
+                i = _hdr.get(key)
+                return str(row[i]).strip() if i is not None and i < len(row) and row[i] else ''
+            for r in _rows[1:]:
+                jur    = _g(r,'jurisdiction')
+                reason = _g(r,'reason')
+                tat    = safe_float(_g(r,'search tat'))
+                if jur and reason:
+                    outliers_by_jur[jur].append({
+                        'tat':    tat,
+                        'reason': reason,
+                        'search': _g(r,'search name'),
+                        'client': _g(r,'client name'),
+                    })
+    except Exception as e:
+        print(f'Outliers sheet skipped: {e}')
 
 # ── Load SimpleMaps base (names, existing status/descriptions) ───────────
 sm_file = BASE / "simplemaps-base.json"
@@ -238,11 +271,12 @@ for fips, info in map_data.items():
         'state':       abbrev,
         'status':      COLOR_STATUS.get(info.get('color',''), 'ok'),
         'description': info.get('description',''),
-        'periods':     None,
-        'types':       None,
-        'trend':       0,
-        'latest':      None,
-        'precomp':     None,
+        'periods':  None,
+        'types':    None,
+        'trend':    0,
+        'latest':   None,
+        'precomp':  None,
+        'outliers': None,
     }
 
 # ── Match jurisdictions to FIPS ───────────────────────────────────────────
@@ -261,11 +295,12 @@ for fips, c in county_db.items():
                 sm_map[fips] = jur; break
 
 for fips, jur in sm_map.items():
-    county_db[fips]['periods'] = period_stats.get(jur)
-    county_db[fips]['types']   = type_stats.get(jur)
-    county_db[fips]['trend']   = trends.get(jur, 0)
-    county_db[fips]['latest']  = latest_out.get(jur)
-    county_db[fips]['precomp'] = precomp.get(jur)  # overall stats from file
+    county_db[fips]['periods']  = period_stats.get(jur)
+    county_db[fips]['types']    = type_stats.get(jur)
+    county_db[fips]['trend']    = trends.get(jur, 0)
+    county_db[fips]['latest']   = latest_out.get(jur)
+    county_db[fips]['precomp']  = precomp.get(jur)
+    county_db[fips]['outliers'] = outliers_by_jur.get(jur) or None
 
 # ── Preserve admin overrides ──────────────────────────────────────────────
 existing_file = BASE / "county-data.json"
