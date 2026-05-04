@@ -727,6 +727,7 @@ function logoutAdmin(){
 function updateLockIcon(){
   const el = document.getElementById('admin-lock');
   const icon = document.getElementById('lock-icon');
+  if(!el || !icon) return; // elements removed from public view
   if(adminUnlocked){
     icon.textContent = '🔓';
     el.title = 'Admin signed in — click to sign out';
