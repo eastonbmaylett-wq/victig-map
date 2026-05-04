@@ -358,6 +358,8 @@ function drawMap(topo){
   const wrap = document.getElementById('map-wrap');
   const W = wrap.clientWidth || window.innerWidth || 1200;
   const H = wrap.clientHeight || (window.innerHeight - 120) || 700;
+  console.log('[MAP] drawMap W='+W+' H='+H+' counties='+Object.keys(counties).length);
+  setStatus('Drawing ('+W+'x'+H+')…');
   svgSel = d3.select('#map-svg').attr('width',W).attr('height',H);
 
   const allCounties = topojson.feature(topo, topo.objects.counties);
