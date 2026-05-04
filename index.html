@@ -466,12 +466,14 @@ function onCountyClick(event, d){
     const rankPct = s.rank ? Math.round((1-s.rank/s.total)*100) : null;
     statsHtml = `
       <div class="p-grid">
-        <div><div class="p-lbl">Avg TAT</div><div class="p-val">${s.avg}d <span style="font-size:10px;color:#999;font-weight:400">(${daysToHM(s.avg)})</span></div></div>
-        <div><div class="p-lbl">Max TAT</div><div class="p-val">${s.max}d</div></div>
-        <div><div class="p-lbl">Min TAT</div><div class="p-val">${s.min}d <span style="font-size:10px;color:#999;font-weight:400">(${daysToHM(s.min)})</span></div></div>
+        <div><div class="p-lbl">Avg TAT</div><div class="p-val">${daysToReadable(s.avg)}</div></div>
+        <div><div class="p-lbl">Max TAT</div><div class="p-val">${daysToReadable(s.max)}</div></div>
+        <div><div class="p-lbl">Min TAT</div><div class="p-val">${daysToReadable(s.min)}</div></div>
         <div><div class="p-lbl">Searches</div><div class="p-val">${s.count.toLocaleString()}</div></div>
       </div>
-      ${rankPct !== null ? `<div class="p-rank">Faster than <strong>${rankPct}%</strong> of counties (#${s.rank} of ${s.total.toLocaleString()})</div>` : ''}`;
+      ${rankPct !== null ? `<div class="p-rank">Faster than <strong>${rankPct}%</strong> of counties (#${s.rank} of ${s.total.toLocaleString()})</div>` : ''}
+      ${c.precomp?.gt2weeks ? `<div style="font-size:10px;color:#de7612;margin-top:4px">⚠ ${c.precomp.gt2weeks} search${c.precomp.gt2weeks!==1?'es':''} exceeded 2 weeks</div>` : ''}
+      ${c.precomp?.lt10min ? `<div style="font-size:10px;color:#55ae5c;margin-top:2px">⚡ ${c.precomp.lt10min} search${c.precomp.lt10min!==1?'es':''} completed in under 10 min</div>` : ''}`;
   }
 
   const descHtml = c.description
@@ -481,9 +483,11 @@ function onCountyClick(event, d){
   const latestHtml = c.latest ? `
     <div class="p-latest">
       <div class="p-latest-title">Most Recent Search</div>
-      <div class="p-latest-row"><span class="p-latest-lbl">Date</span><span>${c.latest.date}</span></div>
-      <div class="p-latest-row"><span class="p-latest-lbl">TAT</span><span>${daysToReadable(c.latest.tat)}</span></div>
+      <div class="p-latest-row"><span class="p-latest-lbl">Started</span><span>${c.latest.date}</span></div>
+      ${c.latest.completion ? `<div class="p-latest-row"><span class="p-latest-lbl">Completed</span><span>${c.latest.completion}</span></div>` : ''}
+      <div class="p-latest-row"><span class="p-latest-lbl">TAT</span><span><b>${daysToReadable(c.latest.tat)}</b></span></div>
       <div class="p-latest-row"><span class="p-latest-lbl">Type</span><span>${c.latest.search}</span></div>
+      ${c.latest.client ? `<div class="p-latest-row"><span class="p-latest-lbl">Client</span><span style="font-size:10px">${c.latest.client}</span></div>` : ''}
     </div>` : '';
 
   document.getElementById('popup-body').innerHTML = `
