@@ -132,55 +132,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     </div>
     <div id="header-right">
       <a href="/" target="_blank" style="color:rgba(255,255,255,.65);font-size:12px;text-decoration:none">↗ View public map</a>
-      <button onclick="toggleSettingsPanel()" id="settings-nav-btn" style="padding:4px 13px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);color:white;border-radius:5px;cursor:pointer;font-size:12px">⚙️ Settings</button>
       <button onclick="toggleEmbedPanel()" id="embed-nav-btn" style="padding:4px 13px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);color:white;border-radius:5px;cursor:pointer;font-size:12px">🔗 Embed / Share</button>
       <button id="logout-btn" onclick="doLogout()">Sign Out</button>
-    </div>
-  </div>
-
-  <!-- Settings panel -->
-  <div id="settings-panel" style="display:none;padding:28px 32px;overflow-y:auto;flex:1;max-width:700px">
-    <h2 style="font-size:16px;color:#1a2b45;margin-bottom:4px">⚙️ Site Settings</h2>
-    <p style="font-size:13px;color:#888;margin-bottom:24px">Edit text and labels that appear on the public map.</p>
-
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
-      <div>
-        <label style="font-size:11px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.3px;display:block;margin-bottom:5px">Page Title</label>
-        <input id="cfg-title" type="text" style="width:100%;padding:7px 10px;border:1.5px solid #ddd;border-radius:6px;font-size:13px">
-      </div>
-      <div>
-        <label style="font-size:11px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.3px;display:block;margin-bottom:5px">Subtitle</label>
-        <input id="cfg-subtitle" type="text" style="width:100%;padding:7px 10px;border:1.5px solid #ddd;border-radius:6px;font-size:13px">
-      </div>
-      <div>
-        <label style="font-size:11px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.3px;display:block;margin-bottom:5px">Fastest Panel Title</label>
-        <input id="cfg-fastest" type="text" style="width:100%;padding:7px 10px;border:1.5px solid #ddd;border-radius:6px;font-size:13px">
-      </div>
-      <div>
-        <label style="font-size:11px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.3px;display:block;margin-bottom:5px">Slowest Panel Title</label>
-        <input id="cfg-slowest" type="text" style="width:100%;padding:7px 10px;border:1.5px solid #ddd;border-radius:6px;font-size:13px">
-      </div>
-    </div>
-
-    <div style="margin-top:24px">
-      <div style="font-size:12px;font-weight:700;color:#1a2b45;margin-bottom:12px;text-transform:uppercase;letter-spacing:.4px">🏷️ Status Labels</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-        <div><label style="font-size:11px;color:#555;display:block;margin-bottom:3px">🟢 No Delay</label>
-          <input id="cfg-ok" type="text" style="width:100%;padding:6px 9px;border:1.5px solid #ddd;border-radius:5px;font-size:12px"></div>
-        <div><label style="font-size:11px;color:#555;display:block;margin-bottom:3px">🟡 Delay</label>
-          <input id="cfg-delay" type="text" style="width:100%;padding:6px 9px;border:1.5px solid #ddd;border-radius:5px;font-size:12px"></div>
-        <div><label style="font-size:11px;color:#555;display:block;margin-bottom:3px">🟠 TAT &gt;14 Days</label>
-          <input id="cfg-high_tat" type="text" style="width:100%;padding:6px 9px;border:1.5px solid #ddd;border-radius:5px;font-size:12px"></div>
-        <div><label style="font-size:11px;color:#555;display:block;margin-bottom:3px">🔴 Significant Delay</label>
-          <input id="cfg-significant" type="text" style="width:100%;padding:6px 9px;border:1.5px solid #ddd;border-radius:5px;font-size:12px"></div>
-        <div><label style="font-size:11px;color:#555;display:block;margin-bottom:3px">🟣 Closed</label>
-          <input id="cfg-closed" type="text" style="width:100%;padding:6px 9px;border:1.5px solid #ddd;border-radius:5px;font-size:12px"></div>
-      </div>
-    </div>
-
-    <div style="margin-top:20px;display:flex;align-items:center;gap:12px">
-      <button onclick="saveSettings()" style="padding:9px 24px;background:#1a2b45;color:white;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600">Save Settings</button>
-      <span id="settings-status" style="font-size:12px"></span>
     </div>
   </div>
 
@@ -883,66 +836,6 @@ async function doDescImport(){
     document.getElementById('desc-status').style.color='#cf4027';
   }
   document.getElementById('desc-import-btn').disabled=false;
-}
-
-// ── Settings panel ────────────────────────────────────────────────
-let settingsOpen = false;
-let currentConfig = {};
-
-async function loadSettings(){
-  try{
-    const r = await fetch('/site-config.json');
-    currentConfig = await r.json();
-    document.getElementById('cfg-title').value     = currentConfig.title || '';
-    document.getElementById('cfg-subtitle').value  = currentConfig.subtitle || '';
-    document.getElementById('cfg-fastest').value   = currentConfig.fastestTitle || '';
-    document.getElementById('cfg-slowest').value   = currentConfig.slowestTitle || '';
-    const sl = currentConfig.statusLabels || {};
-    ['ok','delay','high_tat','significant','closed'].forEach(k=>{
-      const el = document.getElementById('cfg-'+k);
-      if(el) el.value = sl[k] || '';
-    });
-  } catch(e){}
-}
-
-function toggleSettingsPanel(){
-  settingsOpen = !settingsOpen;
-  document.getElementById('settings-panel').style.display = settingsOpen ? 'block' : 'none';
-  document.getElementById('embed-panel').style.display = 'none';
-  document.getElementById('body').style.display = settingsOpen ? 'none' : 'grid';
-  embedOpen = false;
-  document.getElementById('embed-nav-btn').style.background = 'rgba(255,255,255,.12)';
-  document.getElementById('settings-nav-btn').style.background = settingsOpen ? 'rgba(255,255,255,.3)' : 'rgba(255,255,255,.12)';
-  if(settingsOpen) loadSettings();
-}
-
-async function saveSettings(){
-  const config = {
-    title:        document.getElementById('cfg-title').value.trim(),
-    subtitle:     document.getElementById('cfg-subtitle').value.trim(),
-    fastestTitle: document.getElementById('cfg-fastest').value.trim(),
-    slowestTitle: document.getElementById('cfg-slowest').value.trim(),
-    statusLabels: {},
-    legendNotes:  currentConfig.legendNotes || {},
-    badgeLabel:   currentConfig.badgeLabel || 'delayed',
-    brandText:    currentConfig.brandText || ''
-  };
-  ['ok','delay','high_tat','significant','closed'].forEach(k=>{
-    const el = document.getElementById('cfg-'+k);
-    if(el) config.statusLabels[k] = el.value.trim();
-  });
-  const st = document.getElementById('settings-status');
-  st.textContent = 'Saving…'; st.style.color = '#856404';
-  try{
-    const r = await fetch('/admin/site-config',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({password:token, config})
-    });
-    const d = await r.json();
-    if(r.ok){ st.textContent = '✓ Saved — live on public map'; st.style.color='#155724'; setTimeout(()=>st.textContent='',3000); }
-    else { st.textContent='Error: '+(d.detail||'failed'); st.style.color='#cf4027'; }
-  } catch(e){ st.textContent='Network error'; st.style.color='#cf4027'; }
 }
 
 // ── Embed panel ────────────────────────────────────────────────
