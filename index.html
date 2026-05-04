@@ -1,0 +1,754 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Victig Court Search TAT Map</title>
+<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#fff;display:flex;flex-direction:column;height:100vh;overflow:hidden}
+
+/* Header */
+#header{background:#1a2b45;color:white;padding:10px 16px;display:flex;align-items:center;gap:12px;flex-shrink:0;flex-wrap:wrap}
+#header h1{font-size:15px;font-weight:600;white-space:nowrap}
+#header .subtitle{font-size:10px;opacity:.55;margin-top:1px}
+#delayed-badge{background:#cf4027;color:white;border-radius:20px;padding:2px 9px;font-size:11px;font-weight:600;white-space:nowrap}
+#search-wrap{position:relative;flex:1;max-width:260px;margin-left:auto}
+#search{width:100%;padding:6px 11px;border-radius:6px;border:none;font-size:13px;background:rgba(255,255,255,0.13);color:white}
+#search::placeholder{color:rgba(255,255,255,0.4)}
+#search:focus{outline:none;background:rgba(255,255,255,0.2)}
+#search-results{position:absolute;top:34px;left:0;right:0;background:white;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,0.2);max-height:200px;overflow-y:auto;z-index:9999;display:none}
+.search-item{padding:7px 12px;cursor:pointer;font-size:12px;color:#222;border-bottom:1px solid #f0f0f0}
+.search-item:hover{background:#f0f4ff}
+.s-badge{font-size:10px;color:#888;margin-left:4px}
+
+/* Toolbar */
+#toolbar{background:#f7f8fa;border-bottom:1px solid #e0e4ea;padding:6px 16px;display:flex;align-items:center;gap:8px;flex-shrink:0;flex-wrap:wrap}
+.tb-label{font-size:11px;color:#888;font-weight:500;white-space:nowrap}
+.btn-group{display:flex;gap:3px}
+.tb-btn{padding:4px 10px;border-radius:5px;border:1.5px solid #ddd;background:white;font-size:11px;cursor:pointer;color:#555;font-weight:500;white-space:nowrap;transition:all .12s}
+.tb-btn:hover{border-color:#aaa}
+.tb-btn.active{background:#1a2b45;color:white;border-color:#1a2b45}
+.tb-sep{width:1px;background:#ddd;align-self:stretch;margin:0 4px}
+
+/* Map */
+#map-wrap{flex:1;position:relative;overflow:hidden;background:white}
+#map-svg{width:100%;height:100%}
+.county{stroke:#e8e8e8;stroke-width:.3;cursor:pointer}
+.county:hover{stroke:#333;stroke-width:1}
+.state-border{fill:none;stroke:white;stroke-width:2;pointer-events:none}
+.state-hit{fill:transparent;cursor:pointer}
+.state-hit:hover{fill:rgba(0,0,0,0.04)}
+
+/* Zoom */
+#zoom-controls{position:absolute;top:12px;left:12px;display:flex;flex-direction:column;gap:3px;z-index:50}
+#zoom-controls button{width:28px;height:28px;border:none;border-radius:5px;background:white;box-shadow:0 1px 5px rgba(0,0,0,0.18);font-size:15px;cursor:pointer;color:#333;line-height:1}
+#zoom-controls button:hover{background:#f0f0f0}
+
+/* Tooltip */
+#tooltip{position:absolute;pointer-events:none;background:rgba(20,30,50,.88);color:white;padding:5px 9px;border-radius:5px;font-size:11px;display:none;white-space:nowrap;z-index:100}
+
+/* Popup */
+#popup{position:absolute;background:white;border-radius:9px;box-shadow:0 4px 20px rgba(0,0,0,.18);padding:14px;width:255px;z-index:200;display:none;max-height:calc(100vh - 130px);overflow-y:auto}
+#popup-close{position:absolute;top:9px;right:11px;cursor:pointer;font-size:16px;color:#bbb;line-height:1}
+#popup-close:hover{color:#333}
+#popup h3{font-size:13px;color:#1a2b45;margin-bottom:5px;padding-right:18px;line-height:1.3}
+.p-badge{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;margin-bottom:9px;text-transform:uppercase;letter-spacing:.4px}
+.trend-arrow{font-size:13px}
+.p-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;margin-bottom:7px}
+.p-lbl{font-size:10px;color:#999}
+.p-val{font-size:13px;font-weight:600;color:#222}
+.p-rank{font-size:11px;color:#666;margin-bottom:6px}
+.p-desc{font-size:11px;color:#555;background:#f8f8f8;border-radius:5px;padding:6px 8px;line-height:1.5;border-left:3px solid #dea922;margin-bottom:7px}
+.p-nodata{font-size:11px;color:#bbb;font-style:italic;margin-bottom:7px}
+.p-latest{background:#f4f7ff;border-radius:6px;padding:7px 9px;margin-bottom:7px;font-size:11px}
+.p-latest-title{font-weight:600;color:#1a2b45;margin-bottom:5px;font-size:11px}
+.p-latest-row{display:flex;justify-content:space-between;color:#555;padding:1px 0}
+.p-latest-lbl{color:#999;margin-right:8px}
+.edit-btn{width:100%;padding:6px;background:#1a2b45;color:white;border:none;border-radius:5px;cursor:pointer;font-size:11px}
+.edit-btn:hover{background:#253d61}
+
+/* Side panels */
+#panels{position:absolute;right:12px;top:12px;display:flex;flex-direction:column;gap:8px;z-index:50}
+.side-panel{background:white;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.12);font-size:12px;overflow:hidden}
+.panel-header{padding:8px 12px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none;border-bottom:1px solid #f0f0f0}
+.panel-header h4{font-size:11px;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:.5px}
+.panel-toggle{font-size:11px;color:#aaa}
+.panel-body{max-height:220px;overflow-y:auto}
+.rank-row{display:flex;align-items:center;gap:7px;padding:5px 11px;cursor:pointer;border-bottom:1px solid #f8f8f8}
+.rank-row:hover{background:#f5f7ff}
+.rank-medal{font-size:15px;width:20px;text-align:center;flex-shrink:0}
+.rank-num{font-size:11px;color:#bbb;width:20px;text-align:right;flex-shrink:0}
+.rank-name{font-size:11px;color:#222;font-weight:500}
+.rank-tat{font-size:10px;color:#888}
+
+/* Legend */
+#admin-lock{position:absolute;bottom:14px;right:14px;background:white;border-radius:6px;padding:5px 8px;box-shadow:0 2px 8px rgba(0,0,0,.12);cursor:pointer;font-size:14px;z-index:50;opacity:.5;transition:opacity .15s}
+#admin-lock:hover{opacity:1}
+#legend{position:absolute;bottom:14px;left:12px;background:white;border-radius:8px;padding:10px 13px;box-shadow:0 2px 10px rgba(0,0,0,.12);font-size:11px;line-height:1.9;z-index:50}
+#legend h4{font-size:10px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px}
+.leg-row{display:flex;align-items:center;gap:6px}
+.leg-sw{width:12px;height:12px;border-radius:3px;flex-shrink:0}
+#legend .nd{margin-top:6px;padding-top:6px;border-top:1px solid #eee;color:#bbb;font-size:10px}
+#gradient-bar{width:100%;height:8px;border-radius:4px;margin-bottom:3px;background:linear-gradient(to right,#55ae5c,#dea922,#de7612,#cf4027)}
+#gradient-labels{display:flex;justify-content:space-between;font-size:9px;color:#aaa}
+
+/* Admin */
+#overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.3);z-index:9998}
+#admin-panel{display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:white;border-radius:10px;box-shadow:0 8px 32px rgba(0,0,0,.2);padding:20px;width:380px;max-width:95vw;z-index:9999}
+/* Password gate */
+#pw-gate{display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:white;border-radius:10px;box-shadow:0 8px 32px rgba(0,0,0,.2);padding:24px;width:320px;max-width:95vw;z-index:10000;text-align:center}
+#pw-gate h3{font-size:15px;color:#1a2b45;margin-bottom:6px}
+#pw-gate p{font-size:12px;color:#888;margin-bottom:14px}
+#pw-input{width:100%;padding:8px 11px;border-radius:6px;border:1.5px solid #ddd;font-size:14px;margin-bottom:10px;text-align:center;letter-spacing:2px}
+#pw-input:focus{outline:none;border-color:#1a2b45}
+#pw-error{color:#cf4027;font-size:12px;margin-bottom:8px;min-height:16px}
+#pw-gate .btn-row{justify-content:center}
+#pw-submit{background:#1a2b45;color:white;flex:1}
+#pw-cancel-btn{background:#f0f0f0;color:#555;flex:1}
+#admin-panel h3{font-size:14px;margin-bottom:3px;color:#1a2b45}
+#admin-lbl{color:#888;font-size:11px;margin-bottom:10px}
+#admin-status{width:100%;padding:7px 9px;border-radius:6px;border:1px solid #ddd;font-size:13px;margin-bottom:9px}
+#admin-desc{width:100%;height:80px;padding:7px 9px;border-radius:6px;border:1px solid #ddd;font-size:12px;resize:vertical}
+.btn-row{display:flex;gap:8px;margin-top:10px}
+.btn-row button{flex:1;padding:8px;border-radius:6px;border:none;cursor:pointer;font-size:13px;font-weight:500}
+#admin-save{background:#1a2b45;color:white}
+#admin-cancel{background:#f0f0f0;color:#555}
+</style>
+</head>
+<body>
+
+<div id="header">
+  <div><h1>Victig Court Search — TAT Map</h1><div class="subtitle" id="data-date">Loading…</div></div>
+  <span id="delayed-badge">— delayed</span>
+  <div id="search-wrap">
+    <input id="search" type="text" placeholder="Search county or state…" autocomplete="off">
+    <div id="search-results"></div>
+  </div>
+</div>
+
+<div id="toolbar">
+  <span class="tb-label">Period:</span>
+  <div class="btn-group">
+    <button class="tb-btn" data-period="180d">6 Months</button>
+    <button class="tb-btn active" data-period="90d">3 Months</button>
+    <button class="tb-btn" data-period="60d">60 Days</button>
+    <button class="tb-btn" data-period="30d">30 Days</button>
+  </div>
+  <div class="tb-sep"></div>
+  <span class="tb-label">Search Type:</span>
+  <div class="btn-group">
+    <button class="tb-btn active" data-type="all">All Searches</button>
+    <button class="tb-btn" data-type="county_criminal">County Criminal <span style="font-weight:400;opacity:.7">(courthouse)</span></button>
+    <button class="tb-btn" data-type="statewide">Statewide <span style="font-weight:400;opacity:.7">(state DB)</span></button>
+  </div>
+  <div class="tb-sep"></div>
+  <span class="tb-label">Color:</span>
+  <div class="btn-group">
+    <button class="tb-btn active" data-color="bucket">Status</button>
+    <button class="tb-btn" data-color="gradient">Gradient</button>
+  </div>
+  <div class="tb-sep"></div>
+  <span class="tb-label">Filter:</span>
+  <div class="btn-group">
+    <button class="tb-btn active" data-filter="all">All</button>
+    <button class="tb-btn" data-filter="ok">No Delay</button>
+    <button class="tb-btn" data-filter="delay">Delay</button>
+    <button class="tb-btn" data-filter="high_tat">TAT&gt;14d</button>
+    <button class="tb-btn" data-filter="significant">Significant</button>
+  </div>
+</div>
+
+<div id="map-wrap">
+  <svg id="map-svg"></svg>
+  <div id="zoom-controls">
+    <button id="z-in">+</button>
+    <button id="z-reset">⌂</button>
+    <button id="z-out">−</button>
+  </div>
+  <div id="tooltip"></div>
+  <div id="popup"><span id="popup-close" onclick="closePopup()">×</span><div id="popup-body"></div></div>
+
+  <div id="panels">
+    <div class="side-panel">
+      <div class="panel-header" onclick="togglePanel('fastest')">
+        <h4>🥇 Fastest Counties</h4><span class="panel-toggle" id="tog-fastest">▼</span>
+      </div>
+      <div class="panel-body" id="panel-fastest" style="display:none"></div>
+    </div>
+    <div class="side-panel">
+      <div class="panel-header" onclick="togglePanel('slowest')">
+        <h4>🐢 Slowest Counties</h4><span class="panel-toggle" id="tog-slowest">▼</span>
+      </div>
+      <div class="panel-body" id="panel-slowest" style="display:none"></div>
+    </div>
+  </div>
+
+  <div id="admin-lock" onclick="adminUnlocked ? logoutAdmin() : showPwGate(null)">
+    <span id="lock-icon">🔒</span>
+  </div>
+  <div id="legend">
+    <div id="legend-buckets">
+      <h4>TAT Status</h4>
+      <div class="leg-row"><div class="leg-sw" style="background:#55ae5c"></div>No Delay <span style="color:#bbb;font-size:10px">(on track)</span></div>
+      <div class="leg-row"><div class="leg-sw" style="background:#dea922"></div>Delay <span style="color:#bbb;font-size:10px">(expect slow turnaround)</span></div>
+      <div class="leg-row"><div class="leg-sw" style="background:#de7612"></div>Avg TAT &gt;14 Days <span style="color:#bbb;font-size:10px">(2+ weeks)</span></div>
+      <div class="leg-row"><div class="leg-sw" style="background:#cf4027"></div>Significant Delay <span style="color:#bbb;font-size:10px">(severely impacted)</span></div>
+      <div class="leg-row"><div class="leg-sw" style="background:#d4d8dd"></div>No Data <span style="color:#bbb;font-size:10px">(no recent searches)</span></div>
+    </div>
+    <div id="legend-gradient" style="display:none">
+      <h4>Avg TAT (days)</h4>
+      <div id="gradient-bar"></div>
+      <div id="gradient-labels"><span>Fastest</span><span>Slowest</span></div>
+    </div>
+
+  </div>
+</div>
+
+<div id="pw-gate">
+  <h3>🔒 Admin Access</h3>
+  <p>Enter the admin password to edit county statuses.</p>
+  <input id="pw-input" type="password" placeholder="Password" onkeydown="if(event.key==='Enter')submitPw()">
+  <div id="pw-error"></div>
+  <div class="btn-row">
+    <button id="pw-cancel-btn" onclick="cancelPw()">Cancel</button>
+    <button id="pw-submit" onclick="submitPw()">Unlock</button>
+  </div>
+</div>
+<div id="overlay" onclick="closeAdmin()"></div>
+<div id="admin-panel">
+  <h3>Edit County Status</h3>
+  <div id="admin-lbl"></div>
+  <select id="admin-status">
+    <option value="ok">✅ No Delay</option>
+    <option value="delay">🟡 Delay</option>
+    <option value="high_tat">🟠 Avg TAT &gt;14 Days</option>
+    <option value="significant">🔴 Significant Delay</option>
+  </select>
+  <textarea id="admin-desc" placeholder="Delay description (optional)…"></textarea>
+  <div class="btn-row">
+    <button id="admin-save" onclick="saveAdmin()">Save</button>
+    <button id="admin-cancel" onclick="closeAdmin()">Cancel</button>
+  </div>
+</div>
+
+<script>
+const STATUS = {
+  ok:          {fill:'#55ae5c',label:'No Delay',        badge:'#d4edda',text:'#155724'},
+  delay:       {fill:'#dea922',label:'Delay',            badge:'#fff3cd',text:'#856404'},
+  high_tat:    {fill:'#de7612',label:'Avg TAT >14 Days', badge:'#ffe5cc',text:'#7a3600'},
+  significant: {fill:'#cf4027',label:'Significant Delay',badge:'#f8d7da',text:'#721c24'},
+  no_data:     {fill:'#d4d8dd',label:'No Data',          badge:'#f0f0f0',text:'#888'},
+};
+
+// Gradient: green→yellow→orange→red
+const gradScale = d3.scaleSequential()
+  .domain([0, 14])
+  .clamp(true)
+  .interpolator(d3.interpolateRgbBasis(['#55ae5c','#dea922','#de7612','#cf4027']));
+
+let counties = {};
+let localOverrides = JSON.parse(localStorage.getItem('victig_overrides')||'{}');
+let editingFips = null;
+let countyPaths = {};
+let activePeriod = '90d';
+let activeType   = 'all';
+let activeColor  = 'bucket';
+let activeFilter = 'all';
+let svgZoom, svgSel, gSel;
+let topoData;
+let stateFeatures = [];
+let pathFn;
+
+function getC(fips){ return counties[fips]; }
+
+function getStats(fips){
+  const c = getC(fips); if(!c) return null;
+  if(activeType !== 'all'){
+    return c.types?.[activeType] || null;
+  }
+  return c.periods?.[activePeriod] || null;
+}
+
+function daysToReadable(d){
+  if(d === 0) return 'Same day';
+  const totalMins = Math.round(d * 24 * 60);
+  if(totalMins < 60)  return `${totalMins} min${totalMins !== 1 ? 's' : ''}`;
+  const h = Math.floor(totalMins / 60);
+  const m = totalMins % 60;
+  if(h < 24) return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  const days = Math.floor(h / 24);
+  const remH = h % 24;
+  // If it's a whole number of days, say "X day(s)"
+  if(remH === 0) return `${days} day${days !== 1 ? 's' : ''}`;
+  return `${days}d ${remH}h`;
+}
+
+function daysToHM(d){
+  const totalMins = Math.round(d * 24 * 60);
+  const h = Math.floor(totalMins / 60);
+  const m = totalMins % 60;
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
+
+function getAvg(fips){
+  const s = getStats(fips); return s?.avg ?? null;
+}
+
+function getStatus(fips){
+  const c = getC(fips); if(!c) return 'no_data';
+  return c.status || 'ok';
+}
+
+function getFill(fips){
+  const avg = getAvg(fips);
+  if(avg === null) return STATUS.no_data.fill;
+  if(activeColor === 'gradient') return gradScale(avg);
+  return STATUS[getStatus(fips)]?.fill || STATUS.no_data.fill;
+}
+
+function dimmed(fips){
+  if(activeFilter === 'all') return false;
+  return getStatus(fips) !== activeFilter;
+}
+
+// ── Init ─────────────────────────────────────────────────────────────────
+async function init(){
+  const [topo, data] = await Promise.all([
+    d3.json('https://cdn.jsdelivr.net/npm/us-atlas@3/counties-10m.json'),
+    d3.json('county-data.json')
+  ]);
+  topoData = topo;
+  counties = data.counties;
+
+  // Apply local overrides
+  for(const [fips,ov] of Object.entries(localOverrides)){
+    if(counties[fips]){
+      if(ov.status)       counties[fips].status = ov.status;
+      if(ov.description !== undefined) counties[fips].description = ov.description;
+    }
+  }
+
+  const dateStr = data.maxDate ? `Data through ${data.maxDate}` : '';
+  document.getElementById('data-date').textContent = dateStr;
+
+  drawMap(topo);
+  updateBadge();
+  buildPanels();
+  buildSearchIndex();
+  initToolbar();
+}
+
+// ── Map ───────────────────────────────────────────────────────────────────
+function drawMap(topo){
+  const wrap = document.getElementById('map-wrap');
+  const W = wrap.clientWidth, H = wrap.clientHeight;
+  svgSel = d3.select('#map-svg').attr('width',W).attr('height',H);
+
+  const allCounties = topojson.feature(topo, topo.objects.counties);
+  const allStates   = topojson.feature(topo, topo.objects.states);
+  const stateMesh   = topojson.mesh(topo, topo.objects.states, (a,b)=>a!==b);
+
+  const proj = d3.geoAlbersUsa().fitSize([W,H], allCounties);
+  const path = d3.geoPath().projection(proj);
+  pathFn = path;
+  stateFeatures = allStates.features;
+
+  gSel = svgSel.append('g');
+
+  // Counties
+  gSel.append('g').selectAll('path')
+    .data(allCounties.features).join('path')
+    .attr('class','county')
+    .attr('d', path)
+    .attr('fill', d => getFill(d.id))
+    .attr('opacity', d => dimmed(d.id) ? 0.25 : 1)
+    .on('mousemove', onHover)
+    .on('mouseleave', ()=> document.getElementById('tooltip').style.display='none')
+    .on('click', onCountyClick)
+    .on('dblclick', (event, d) => {
+      event.stopPropagation();
+      const stateFips = d.id.slice(0,2);
+      const stateFeature = allStates.features.find(s => s.id === stateFips);
+      if(stateFeature) svgSel.transition().duration(600)
+        .call(svgZoom.transform, zoomToBounds(path.bounds(stateFeature), W, H));
+    })
+    .each(function(d){ countyPaths[d.id]=this; });
+
+
+
+  // State borders
+  gSel.append('path').datum(stateMesh)
+    .attr('class','state-border').attr('d',path);
+
+  // Zoom
+  svgZoom = d3.zoom().scaleExtent([1,12])
+    .on('zoom',(event)=>{
+      gSel.attr('transform',event.transform);
+      const k = event.transform.k;
+      gSel.selectAll('.county').attr('stroke-width', 0.3/k);
+      gSel.selectAll('.state-border').attr('stroke-width', 2/k);
+      closePopup();
+    });
+  svgSel.call(svgZoom);
+  svgSel.on('dblclick.zoom', null); // handle dblclick ourselves
+
+  document.getElementById('z-in').onclick    = ()=> svgSel.transition().call(svgZoom.scaleBy,1.6);
+  document.getElementById('z-out').onclick   = ()=> svgSel.transition().call(svgZoom.scaleBy,0.625);
+  document.getElementById('z-reset').onclick = ()=> svgSel.transition().call(svgZoom.transform,d3.zoomIdentity);
+}
+
+function zoomToBounds(bounds, W, H){
+  const [[x0,y0],[x1,y1]] = bounds;
+  const scale = Math.min(8, 0.85/Math.max((x1-x0)/W,(y1-y0)/H));
+  const tx = W/2 - scale*(x0+x1)/2;
+  const ty = H/2 - scale*(y0+y1)/2;
+  return d3.zoomIdentity.translate(tx,ty).scale(scale);
+}
+
+// ── Tooltip ───────────────────────────────────────────────────────────────
+function onHover(event, d){
+  const c = getC(d.id);
+  const tt = document.getElementById('tooltip');
+  if(!c){ tt.style.display='none'; return; }
+  const avg = getAvg(d.id);
+  const avgStr = avg !== null ? ` · ${avg}d avg` : '';
+  tt.textContent = `${c.name}, ${c.state}${avgStr}`;
+  tt.style.display='block';
+  tt.style.left=(event.offsetX+14)+'px';
+  tt.style.top=(event.offsetY-10)+'px';
+}
+
+// ── County Popup ──────────────────────────────────────────────────────────
+function onCountyClick(event, d){
+  const c = getC(d.id); if(!c) return;
+  const s = getStats(d.id);
+  const status = getStatus(d.id);
+  const sc = STATUS[status];
+  // Performance vs average based on rank percentile
+  let perfHtml = '';
+  if(s && s.rank && s.total){
+    const pct = s.rank / s.total;
+    const [label, color] = pct <= 0.33 ? ['Above Average','#155724']
+                         : pct <= 0.66 ? ['Average','#856404']
+                         :               ['Below Average','#721c24'];
+    perfHtml = `<div style="font-size:11px;margin-bottom:8px;color:#555">Search Time: <strong style="color:${color}">${label}</strong></div>`;
+  }
+
+  let statsHtml = `<div class="p-nodata">No recent search data for this period</div>`;
+  if(s){
+    const rankPct = s.rank ? Math.round((1-s.rank/s.total)*100) : null;
+    statsHtml = `
+      <div class="p-grid">
+        <div><div class="p-lbl">Avg TAT</div><div class="p-val">${s.avg}d <span style="font-size:10px;color:#999;font-weight:400">(${daysToHM(s.avg)})</span></div></div>
+        <div><div class="p-lbl">Max TAT</div><div class="p-val">${s.max}d</div></div>
+        <div><div class="p-lbl">Min TAT</div><div class="p-val">${s.min}d <span style="font-size:10px;color:#999;font-weight:400">(${daysToHM(s.min)})</span></div></div>
+        <div><div class="p-lbl">Searches</div><div class="p-val">${s.count.toLocaleString()}</div></div>
+      </div>
+      ${rankPct !== null ? `<div class="p-rank">Faster than <strong>${rankPct}%</strong> of counties (#${s.rank} of ${s.total.toLocaleString()})</div>` : ''}`;
+  }
+
+  const descHtml = c.description ? `<div class="p-desc">${c.description}</div>` : '';
+
+  const latestHtml = c.latest ? `
+    <div class="p-latest">
+      <div class="p-latest-title">Most Recent Search</div>
+      <div class="p-latest-row"><span class="p-latest-lbl">Date</span><span>${c.latest.date}</span></div>
+      <div class="p-latest-row"><span class="p-latest-lbl">TAT</span><span>${daysToReadable(c.latest.tat)}</span></div>
+      <div class="p-latest-row"><span class="p-latest-lbl">Type</span><span>${c.latest.search}</span></div>
+    </div>` : '';
+
+  document.getElementById('popup-body').innerHTML = `
+    <h3>${c.name} County, ${c.state}</h3>
+    <span class="p-badge" style="background:${sc.badge};color:${sc.text}">${sc.label}</span>
+    ${perfHtml}
+    ${statsHtml}${latestHtml}${descHtml}
+${adminUnlocked ? `<button class="edit-btn" onclick="openAdmin('${d.id}')">✏️ Edit Status / Notes</button>` : ''}`;
+
+  const popup = document.getElementById('popup');
+  const wrap  = document.getElementById('map-wrap');
+  // Show offscreen first to measure real height
+  popup.style.left = '-9999px'; popup.style.top = '-9999px'; popup.style.display = 'block';
+  const pw = popup.offsetWidth, ph = popup.offsetHeight;
+  const pad = 12;
+  let x = event.offsetX + 16;
+  let y = event.offsetY - 20;
+  // Flip left if not enough room on right
+  if (x + pw + pad > wrap.clientWidth)  x = event.offsetX - pw - 8;
+  // Clamp top so bottom doesn't go off screen
+  if (y + ph + pad > wrap.clientHeight) y = wrap.clientHeight - ph - pad;
+  // Never go above top
+  if (y < pad) y = pad;
+  // Never go off left
+  if (x < pad) x = pad;
+  popup.style.left = x+'px'; popup.style.top = y+'px';
+}
+function closePopup(){ document.getElementById('popup').style.display='none'; }
+document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ closePopup(); closeAdmin(); }});
+
+// ── Toolbar ───────────────────────────────────────────────────────────────
+function initToolbar(){
+  document.querySelectorAll('[data-period]').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      document.querySelectorAll('[data-period]').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      activePeriod = btn.dataset.period;
+      refreshColors(); buildPanels();
+    });
+  });
+  document.querySelectorAll('[data-type]').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      document.querySelectorAll('[data-type]').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      activeType = btn.dataset.type;
+      refreshColors(); buildPanels();
+    });
+  });
+  document.querySelectorAll('[data-color]').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      document.querySelectorAll('[data-color]').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      activeColor = btn.dataset.color;
+      document.getElementById('legend-buckets').style.display  = activeColor==='bucket'   ? '' : 'none';
+      document.getElementById('legend-gradient').style.display = activeColor==='gradient' ? '' : 'none';
+      refreshColors();
+    });
+  });
+  document.querySelectorAll('[data-filter]').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      document.querySelectorAll('[data-filter]').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      activeFilter = btn.dataset.filter;
+      refreshColors(); closePopup();
+    });
+  });
+}
+
+function refreshColors(){
+  d3.selectAll('.county')
+    .attr('fill',    d=> getFill(d.id))
+    .attr('opacity', d=> dimmed(d.id) ? 0.2 : 1);
+}
+
+// ── Badge ─────────────────────────────────────────────────────────────────
+function updateBadge(){
+  const n = Object.values(counties).filter(c=>['delay','high_tat','significant'].includes(c.status)).length;
+  document.getElementById('delayed-badge').textContent = `${n} delayed`;
+}
+
+// ── Side Panels ───────────────────────────────────────────────────────────
+const MEDALS = ['🥇','🥈','🥉'];
+function buildPanels(){
+  const eligible = Object.entries(counties)
+    .map(([fips,c])=>({fips, c, s: getStats(fips)}))
+    .filter(x=> x.s && x.s.count >= 10);
+
+  const fastest = [...eligible].sort((a,b)=>a.s.avg-b.s.avg).slice(0,10);
+  const slowest = [...eligible].sort((a,b)=>b.s.avg-a.s.avg).slice(0,10);
+
+  document.getElementById('panel-fastest').innerHTML = fastest.map((x,i)=>`
+    <div class="rank-row" onclick="flyTo('${x.fips}')">
+      <span class="rank-medal">${i<3?MEDALS[i]:''}</span>
+      <span class="rank-num">${i>=3?i+1:''}</span>
+      <div><div class="rank-name">${x.c.name}, ${x.c.state}</div>
+      <div class="rank-tat">${x.s.avg}d avg · ${x.s.count.toLocaleString()} searches</div></div>
+    </div>`).join('');
+
+  document.getElementById('panel-slowest').innerHTML = slowest.map((x,i)=>`
+    <div class="rank-row" onclick="flyTo('${x.fips}')">
+      <span class="rank-medal">${i<3?['🔴','🟠','🟡'][i]:''}</span>
+      <span class="rank-num">${i>=3?i+1:''}</span>
+      <div><div class="rank-name">${x.c.name}, ${x.c.state}</div>
+      <div class="rank-tat">${x.s.avg}d avg · ${x.s.count.toLocaleString()} searches</div></div>
+    </div>`).join('');
+}
+
+function togglePanel(which){
+  const body = document.getElementById(`panel-${which}`);
+  const tog  = document.getElementById(`tog-${which}`);
+  const open = body.style.display !== 'none';
+  body.style.display = open ? 'none' : '';
+  tog.textContent    = open ? '▼' : '▲';
+}
+
+// Rebuild panels when period or type changes so lists stay in sync
+function rebuildPanelsIfOpen(){
+  ['fastest','slowest'].forEach(which => {
+    if(document.getElementById(`panel-${which}`).style.display !== 'none') buildPanels();
+    else buildPanels(); // always rebuild so data is fresh when opened
+  });
+}
+
+// ── Search ────────────────────────────────────────────────────────────────
+const STATE_NAMES = {
+  'AL':'Alabama','AK':'Alaska','AZ':'Arizona','AR':'Arkansas','CA':'California',
+  'CO':'Colorado','CT':'Connecticut','DE':'Delaware','FL':'Florida','GA':'Georgia',
+  'HI':'Hawaii','ID':'Idaho','IL':'Illinois','IN':'Indiana','IA':'Iowa',
+  'KS':'Kansas','KY':'Kentucky','LA':'Louisiana','ME':'Maine','MD':'Maryland',
+  'MA':'Massachusetts','MI':'Michigan','MN':'Minnesota','MS':'Mississippi','MO':'Missouri',
+  'MT':'Montana','NE':'Nebraska','NV':'Nevada','NH':'New Hampshire','NJ':'New Jersey',
+  'NM':'New Mexico','NY':'New York','NC':'North Carolina','ND':'North Dakota','OH':'Ohio',
+  'OK':'Oklahoma','OR':'Oregon','PA':'Pennsylvania','RI':'Rhode Island','SC':'South Carolina',
+  'SD':'South Dakota','TN':'Tennessee','TX':'Texas','UT':'Utah','VT':'Vermont',
+  'VA':'Virginia','WA':'Washington','WV':'West Virginia','WI':'Wisconsin','WY':'Wyoming',
+  'DC':'District of Columbia'
+};
+const STATE_FIPS_MAP = {
+  '01':'AL','02':'AK','04':'AZ','05':'AR','06':'CA','08':'CO','09':'CT','10':'DE',
+  '11':'DC','12':'FL','13':'GA','15':'HI','16':'ID','17':'IL','18':'IN','19':'IA',
+  '20':'KS','21':'KY','22':'LA','23':'ME','24':'MD','25':'MA','26':'MI','27':'MN',
+  '28':'MS','29':'MO','30':'MT','31':'NE','32':'NV','33':'NH','34':'NJ','35':'NM',
+  '36':'NY','37':'NC','38':'ND','39':'OH','40':'OK','41':'OR','42':'PA','44':'RI',
+  '45':'SC','46':'SD','47':'TN','48':'TX','49':'UT','50':'VT','51':'VA','53':'WA',
+  '54':'WV','55':'WI','56':'WY'
+};
+
+let searchIndex = [];
+function buildSearchIndex(){
+  // Counties
+  for(const [fips,c] of Object.entries(counties)){
+    if(c.name) searchIndex.push({type:'county', fips, label:`${c.name} County`, sub:c.state});
+  }
+  // States
+  for(const [abbrev, name] of Object.entries(STATE_NAMES)){
+    searchIndex.push({type:'state', abbrev, label:name, sub:'State'});
+  }
+  searchIndex.sort((a,b)=>a.label.localeCompare(b.label));
+}
+const searchEl  = document.getElementById('search');
+const searchRes = document.getElementById('search-results');
+searchEl.addEventListener('input',()=>{
+  const q = searchEl.value.trim().toLowerCase();
+  if(q.length<2){searchRes.style.display='none';return;}
+  const hits = searchIndex.filter(x=>x.label.toLowerCase().includes(q)||x.sub.toLowerCase().includes(q)).slice(0,10);
+  if(!hits.length){searchRes.style.display='none';return;}
+  searchRes.innerHTML = hits.map(h=> h.type==='state'
+    ? `<div class="search-item" onclick="flyToState('${h.abbrev}')">${h.label}<span class="s-badge">State</span></div>`
+    : `<div class="search-item" onclick="flyTo('${h.fips}')">${h.label}<span class="s-badge">${h.sub}</span></div>`
+  ).join('');
+  searchRes.style.display='block';
+});
+document.addEventListener('click',e=>{ if(!e.target.closest('#search-wrap')) searchRes.style.display='none'; });
+
+function flyToState(abbrev){
+  searchRes.style.display='none'; searchEl.value='';
+  const W = +svgSel.attr('width'), H = +svgSel.attr('height');
+  // Find state fips from abbrev
+  const stateFips = Object.entries(STATE_FIPS_MAP).find(([,a])=>a===abbrev)?.[0];
+  if(!stateFips) return;
+  const feature = stateFeatures.find(f=> f.id === stateFips);
+  if(!feature) return;
+  svgSel.transition().duration(600).call(svgZoom.transform, zoomToBounds(pathFn.bounds(feature), W, H));
+}
+
+function flyTo(fips){
+  searchRes.style.display='none'; searchEl.value='';
+  const el = countyPaths[fips];
+  if(!el) return;
+  // Zoom to county
+  const bounds = d3.geoPath().projection(
+    d3.geoAlbersUsa().fitSize([svgSel.attr('width'), svgSel.attr('height')],
+      topojson.feature(topoData, topoData.objects.counties))
+  ).bounds(el.__data__);
+  const W = +svgSel.attr('width'), H = +svgSel.attr('height');
+  svgSel.transition().duration(600).call(svgZoom.transform, zoomToBounds(bounds,W,H));
+  setTimeout(()=> el.dispatchEvent(new MouseEvent('click',{bubbles:true,clientX:W/2,clientY:H/2})), 650);
+}
+
+// ── Password Gate ────────────────────────────────────────────────────────
+// SHA-256 of the admin password — change this hash to change the password
+// Current password: Victig2026!  (hash it at sha256.online or ask Alfred)
+const PW_HASH = 'b3121997c76507dc7adcf3ca13ee60d519cbc3c72a176527e8ba575fc13f3406';
+let adminUnlocked = !!sessionStorage.getItem('victig_admin');
+let pendingAdminFips = null;
+
+async function sha256(str){
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+
+function showPwGate(fips){
+  pendingAdminFips = fips;
+  document.getElementById('pw-input').value = '';
+  document.getElementById('pw-error').textContent = '';
+  document.getElementById('pw-gate').style.display = 'block';
+  document.getElementById('overlay').style.display = 'block';
+  setTimeout(()=> document.getElementById('pw-input').focus(), 50);
+}
+
+async function submitPw(){
+  const val = document.getElementById('pw-input').value;
+  const hash = await sha256(val);
+  if(hash === PW_HASH){
+    sessionStorage.setItem('victig_admin','1');
+    adminUnlocked = true;
+    updateLockIcon();
+    document.getElementById('pw-gate').style.display = 'none';
+    document.getElementById('overlay').style.display = 'none';
+    if(pendingAdminFips) openAdmin(pendingAdminFips);
+  } else {
+    document.getElementById('pw-error').textContent = 'Incorrect password.';
+    document.getElementById('pw-input').value = '';
+    document.getElementById('pw-input').focus();
+  }
+}
+
+function cancelPw(){
+  document.getElementById('pw-gate').style.display = 'none';
+  document.getElementById('overlay').style.display = 'none';
+  pendingAdminFips = null;
+}
+
+function logoutAdmin(){
+  sessionStorage.removeItem('victig_admin');
+  adminUnlocked = false;
+  updateLockIcon();
+}
+
+function updateLockIcon(){
+  const el = document.getElementById('admin-lock');
+  const icon = document.getElementById('lock-icon');
+  if(adminUnlocked){
+    icon.textContent = '🔓';
+    el.title = 'Admin signed in — click to sign out';
+  } else {
+    icon.textContent = '🔒';
+    el.title = 'Admin login';
+  }
+}
+
+// ── Admin ─────────────────────────────────────────────────────────────────
+function openAdmin(fips){
+  closePopup(); editingFips=fips;
+  const c=getC(fips);
+  document.getElementById('admin-lbl').textContent=`${c.name} County, ${c.state}`;
+  document.getElementById('admin-status').value=c.status||'ok';
+  document.getElementById('admin-desc').value=c.description||'';
+  document.getElementById('admin-panel').style.display='block';
+  document.getElementById('overlay').style.display='block';
+}
+function closeAdmin(){
+  document.getElementById('admin-panel').style.display='none';
+  document.getElementById('overlay').style.display='none';
+  editingFips=null;
+}
+function saveAdmin(){
+  if(!editingFips) return;
+  const status=document.getElementById('admin-status').value;
+  const desc=document.getElementById('admin-desc').value.trim();
+  counties[editingFips].status=status;
+  counties[editingFips].description=desc;
+  localOverrides[editingFips]={status,description:desc};
+  localStorage.setItem('victig_overrides',JSON.stringify(localOverrides));
+  const el=countyPaths[editingFips];
+  if(el) d3.select(el).attr('fill',getFill(editingFips));
+  updateBadge(); closeAdmin();
+}
+
+updateLockIcon();
+init();
+</script>
+</body>
+</html>
