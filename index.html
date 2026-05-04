@@ -380,7 +380,9 @@ function drawMap(topo){
   const allStates   = topojson.feature(topo, topo.objects.states);
   const stateMesh   = topojson.mesh(topo, topo.objects.states, (a,b)=>a!==b);
 
-  const proj = d3.geoAlbersUsa().fitSize([W,H], allCounties);
+  // Exclude Pacific territories (GU/AS/MP) from fitSize — they break Albers USA projection
+  const fitFeatures = {...allCounties, features: allCounties.features.filter(f=>!String(f.id).match(/^(60|66|69)/)) };
+  const proj = d3.geoAlbersUsa().fitSize([W,H], fitFeatures);
   const path = d3.geoPath().projection(proj);
   pathFn = path;
   stateFeatures = allStates.features;
