@@ -312,11 +312,26 @@ function dimmed(fips){
 }
 
 // ── Init ─────────────────────────────────────────────────────────────────
+function setStatus(msg){ document.getElementById('data-date').textContent = msg; }
+
 async function init(){
-  const [topo, data] = await Promise.all([
-    d3.json('counties-10m.json'),
-    d3.json('county-data.json')
-  ]);
+  setStatus('Loading map data…');
+  let topo, data;
+  try {
+    setStatus('Fetching boundaries…');
+    const topoRes  = await fetch('counties-10m.json');
+    if (!topoRes.ok) throw new Error('boundaries HTTP ' + topoRes.status);
+    topo = await topoRes.json();
+    setStatus('Fetching county stats…');
+    const dataRes  = await fetch('county-data.json');
+    if (!dataRes.ok) throw new Error('county-data HTTP ' + dataRes.status);
+    data = await dataRes.json();
+  } catch(e) {
+    setStatus('Load error: ' + e.message);
+    console.error(e);
+    return;
+  }
+  setStatus('Rendering map…');
   topoData = topo;
   counties = data.counties;
 
