@@ -147,3 +147,39 @@ async def upload_csv(password: str, file: UploadFile = File(...)):
 def version():
     return {"version": "1.0.0"}
 
+@app.get("/test")
+def test_page():
+    html = """<!DOCTYPE html><html><head><title>Map Diagnostics</title></head><body>
+<h2>Map Load Diagnostics</h2>
+<div id='log' style='font-family:monospace;font-size:14px'></div>
+<script>
+const log = (msg, ok=true) => {
+  const el = document.createElement('div');
+  el.style.color = ok ? 'green' : 'red';
+  el.textContent = (ok ? '✅ ' : '❌ ') + msg;
+  document.getElementById('log').appendChild(el);
+};
+async function run(){
+  log('Starting tests...', true);
+  try {
+    const r1 = await fetch('/d3.min.js');
+    log(`d3.min.js: HTTP ${r1.status}, ${r1.headers.get('content-type')}, ${(await r1.arrayBuffer()).byteLength} bytes`);
+  } catch(e){ log('d3.min.js FAILED: '+e.message, false); }
+  try {
+    const r2 = await fetch('/topojson-client.min.js');
+    log(`topojson.min.js: HTTP ${r2.status}, ${(await r2.arrayBuffer()).byteLength} bytes`);
+  } catch(e){ log('topojson FAILED: '+e.message, false); }
+  try {
+    const r3 = await fetch('/counties-10m.json');
+    log(`counties-10m.json: HTTP ${r3.status}, ${(await r3.arrayBuffer()).byteLength} bytes`);
+  } catch(e){ log('counties-10m.json FAILED: '+e.message, false); }
+  try {
+    const r4 = await fetch('/county-data.json');
+    log(`county-data.json: HTTP ${r4.status}, ${(await r4.arrayBuffer()).byteLength} bytes`);
+  } catch(e){ log('county-data.json FAILED: '+e.message, false); }
+  log('All tests complete.');
+}
+run();
+</script></body></html>"""
+    return Response(content=html, media_type="text/html")
+
