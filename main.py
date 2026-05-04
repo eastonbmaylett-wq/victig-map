@@ -1,7 +1,6 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 import subprocess, shutil, os, hashlib, json
 from pathlib import Path
 
@@ -54,11 +53,6 @@ async def block_raw_files(request: Request, call_next):
     # Block any file extension that shouldn't be public
     suffix = Path(path).suffix.lower()
     ALLOWED_FILES = {"county-data.json", "counties-10m.json", "d3.min.js", "topojson-client.min.js"}
-    if path.startswith("static/"):
-        response = await call_next(request)
-        for k, v in SECURITY_HEADERS.items():
-            response.headers[k] = v
-        return response
     if suffix in BLOCKED_EXTENSIONS and path not in ALLOWED_FILES:
         return JSONResponse(status_code=404, content={"detail": "Not found"})
     response = await call_next(request)
@@ -80,8 +74,6 @@ def get_data():
         headers={"Cache-Control": "no-cache"}
     )
 
-# Mount static assets (JS, geo data) — registered after explicit routes
-app.mount("/static", StaticFiles(directory=str(BASE)), name="static")
 
 # ── Admin routes (password required for all writes) ───────────────────────
 @app.get("/admin")
