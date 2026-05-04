@@ -589,7 +589,7 @@ const MEDALS = ['🥇','🥈','🥉'];
 function buildPanels(){
   const eligible = Object.entries(counties)
     .map(([fips,c])=>({fips, c, s: getStats(fips)}))
-    .filter(x=> x.s && x.s.count >= 10);
+    .filter(x=> x.s && x.s.count >= 1);
 
   const fastest = [...eligible].sort((a,b)=>a.s.avg-b.s.avg).slice(0,10);
   const slowest = [...eligible].sort((a,b)=>b.s.avg-a.s.avg).slice(0,10);
