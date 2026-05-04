@@ -1,6 +1,7 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 import subprocess, shutil, os, hashlib, json
 from pathlib import Path
 
@@ -53,6 +54,11 @@ async def block_raw_files(request: Request, call_next):
     # Block any file extension that shouldn't be public
     suffix = Path(path).suffix.lower()
     ALLOWED_FILES = {"county-data.json", "counties-10m.json", "d3.min.js", "topojson-client.min.js"}
+    if path.startswith("static/"):
+        response = await call_next(request)
+        for k, v in SECURITY_HEADERS.items():
+            response.headers[k] = v
+        return response
     if suffix in BLOCKED_EXTENSIONS and path not in ALLOWED_FILES:
         return JSONResponse(status_code=404, content={"detail": "Not found"})
     response = await call_next(request)
@@ -65,18 +71,6 @@ async def block_raw_files(request: Request, call_next):
 def root():
     return FileResponse(BASE / "index.html", media_type="text/html")
 
-@app.get("/d3.min.js")
-def d3_js():
-    return FileResponse(BASE / "d3.min.js", media_type="application/javascript")
-
-@app.get("/topojson-client.min.js")
-def topojson_js():
-    return FileResponse(BASE / "topojson-client.min.js", media_type="application/javascript")
-
-@app.get("/counties-10m.json")
-def counties_topo():
-    return FileResponse(BASE / "counties-10m.json", media_type="application/json")
-
 @app.get("/county-data.json")
 def get_data():
     """Serve only the sanitized county stats — no PII."""
@@ -85,6 +79,9 @@ def get_data():
         media_type="application/json",
         headers={"Cache-Control": "no-cache"}
     )
+
+# Mount static assets (JS, geo data) — registered after explicit routes
+app.mount("/static", StaticFiles(directory=str(BASE)), name="static")
 
 # ── Admin routes (password required for all writes) ───────────────────────
 @app.get("/admin")
