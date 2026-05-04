@@ -279,6 +279,24 @@ for fips, info in map_data.items():
         'outliers': None,
     }
 
+# Add US territories from counties-10m.json
+TERRITORY_FIPS = {'60':'AS','66':'GU','69':'MP','72':'PR','78':'VI'}
+topo_file = BASE / "counties-10m.json"
+if topo_file.exists():
+    with open(topo_file) as f:
+        topo_data = json.load(f)
+    for geom in topo_data['objects']['counties']['geometries']:
+        fips = str(geom['id'])
+        if fips[:2] in TERRITORY_FIPS and fips not in county_db:
+            name = geom.get('properties', {}).get('name', fips)
+            county_db[fips] = {
+                'fips': fips, 'name': name,
+                'state': TERRITORY_FIPS[fips[:2]],
+                'status': 'ok', 'description': '',
+                'periods': None, 'types': None, 'trend': 0,
+                'latest': None, 'precomp': None, 'outliers': None,
+            }
+
 # ── Match jurisdictions to FIPS ───────────────────────────────────────────
 def norm(s): return re.sub(r'[^a-z]','',s.lower())
 
