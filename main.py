@@ -121,7 +121,3 @@ async def upload_csv(password: str, file: UploadFile = File(...)):
 def version():
     return {"version": "1.0.0"}
 
-# ── Catch-all 404 ─────────────────────────────────────────────────────────
-@app.get("/{path:path}")
-def catch_all(path: str):
-    return JSONResponse(status_code=404, content={"detail": "Not found"})
