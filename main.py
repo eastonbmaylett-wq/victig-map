@@ -249,9 +249,12 @@ async def update_state(payload: dict):
         json.dump(data, f)
     return {"ok": True, "updated": updated}
 
+import time as _time
+_START_TIME = str(int(_time.time()))  # changes every container restart / deploy
+
 @app.get("/api/version")
 def version():
-    return {"version": "1.0.0"}
+    return {"version": _START_TIME}
 
 @app.get("/test")
 def test_page():
