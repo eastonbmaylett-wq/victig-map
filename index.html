@@ -341,7 +341,8 @@ async function init(){
 // ── Map ───────────────────────────────────────────────────────────────────
 function drawMap(topo){
   const wrap = document.getElementById('map-wrap');
-  const W = wrap.clientWidth, H = wrap.clientHeight;
+  const W = wrap.clientWidth || window.innerWidth || 1200;
+  const H = wrap.clientHeight || (window.innerHeight - 120) || 700;
   svgSel = d3.select('#map-svg').attr('width',W).attr('height',H);
 
   const allCounties = topojson.feature(topo, topo.objects.counties);
@@ -747,7 +748,10 @@ function saveAdmin(){
 }
 
 updateLockIcon();
-init();
+init().catch(err => {
+  document.getElementById('data-date').textContent = 'Map error: ' + err.message;
+  console.error('Map init failed:', err);
+});
 </script>
 </body>
 </html>
