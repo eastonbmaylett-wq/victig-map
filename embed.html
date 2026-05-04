@@ -38,7 +38,7 @@ svg{width:100%;height:100%}
     <div class="leg-row"><div class="leg-sw" style="background:#dea922"></div>Delay</div>
     <div class="leg-row"><div class="leg-sw" style="background:#de7612"></div>Avg TAT &gt;14d</div>
     <div class="leg-row"><div class="leg-sw" style="background:#cf4027"></div>Significant Delay</div>
-    <div class="leg-row"><div class="leg-sw" style="background:#d4d8dd"></div>No Data</div>
+    <div class="leg-row"><div class="leg-sw" style="background:#55ae5c"></div>No Data</div>
   </div>
   <div id="zoom-btns">
     <button id="z-in" title="Zoom in">+</button>
@@ -60,7 +60,7 @@ const STATUS = {
   delay:       {fill:'#dea922',label:'Delay',            badge:'#fff3cd',text:'#856404'},
   high_tat:    {fill:'#de7612',label:'Avg TAT >14 Days', badge:'#ffe5cc',text:'#7a3600'},
   significant: {fill:'#cf4027',label:'Significant Delay',badge:'#f8d7da',text:'#721c24'},
-  no_data:     {fill:'#d4d8dd',label:'No Data',          badge:'#f0f0f0',text:'#888'},
+  no_data:     {fill:'#55ae5c',label:'No Data',          badge:'#f0f0f0',text:'#888'},
 };
 let counties={}, svgSel, svgZoom, pathFn, topoData;
 
