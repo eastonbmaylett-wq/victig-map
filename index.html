@@ -414,7 +414,7 @@ function drawMap(topo){
       const k = event.transform.k;
       gSel.selectAll('.county').attr('stroke-width', 0.3/k);
       gSel.selectAll('.state-border').attr('stroke-width', 2/k);
-      gSel.selectAll('.county-medal').attr('font-size', 14/k + 'px');
+      gSel.selectAll('.county-medal').attr('font-size', 22/k + 'px');
       closePopup();
     });
   svgSel.call(svgZoom);
@@ -611,23 +611,32 @@ function buildPanels(){
 
 function placeMedalsOnMap(top3){
   if(!gSel || !pathFn) return;
-  // Remove old medals
   gSel.selectAll('.county-medal').remove();
+  const k = d3.zoomTransform(svgSel.node()).k || 1;
   top3.forEach((x, i) => {
     const el = countyPaths[x.fips];
     if(!el) return;
-    const d = d3.select(el).datum();
-    if(!d) return;
-    const [cx, cy] = pathFn.centroid(d);
+    // Use bounding box center for better visual centering
+    let cx, cy;
+    try {
+      const bb = el.getBBox();
+      cx = bb.x + bb.width / 2;
+      cy = bb.y + bb.height / 2;
+    } catch(e) {
+      const d = d3.select(el).datum();
+      if(!d) return;
+      [cx, cy] = pathFn.centroid(d);
+    }
     if(!cx || !cy || isNaN(cx) || isNaN(cy)) return;
     gSel.append('text')
       .attr('class','county-medal')
       .attr('x', cx)
-      .attr('y', cy + 5)
+      .attr('y', cy + 8)
       .attr('text-anchor','middle')
-      .attr('font-size','14px')
+      .attr('dominant-baseline','middle')
+      .attr('font-size', (22/k) + 'px')
       .attr('pointer-events','none')
-      .attr('style','user-select:none')
+      .style('user-select','none')
       .text(MEDALS[i]);
   });
 }
