@@ -146,6 +146,29 @@ async def upload_csv(password: str, file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=err)
     return {"ok": True, "message": result.stdout.strip() or "Map data updated successfully"}
 
+@app.post("/admin/update-state")
+async def update_state(payload: dict):
+    check_auth(payload.get("password", ""))
+    state       = payload.get("state", "").upper()
+    status      = payload.get("status", "ok")
+    description = payload.get("description", "")
+    if not state:
+        raise HTTPException(status_code=400, detail="state required")
+    if status not in ("ok", "delay", "high_tat", "significant"):
+        raise HTTPException(status_code=400, detail="invalid status")
+    with open(DATA_FILE) as f:
+        data = json.load(f)
+    updated = 0
+    for fips, c in data["counties"].items():
+        if c.get("state", "").upper() == state:
+            c["status"]          = status
+            c["description"]     = description
+            c["_admin_override"] = True
+            updated += 1
+    with open(DATA_FILE, "w") as f:
+        json.dump(data, f)
+    return {"ok": True, "updated": updated}
+
 @app.get("/api/version")
 def version():
     return {"version": "1.0.0"}

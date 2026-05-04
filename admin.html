@@ -151,7 +151,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <div id="list-section">
         <div id="mode-tabs">
           <button class="mode-tab active" id="tab-flagged" onclick="setMode('flagged')">🚩 Flagged (<span id="flagged-count">0</span>)</button>
-          <button class="mode-tab" id="tab-all" onclick="setMode('all')">🔍 All Counties</button>
+          <button class="mode-tab" id="tab-all" onclick="setMode('all')">🔍 All</button>
+          <button class="mode-tab" id="tab-state" onclick="setMode('state')">🇺🇸 States</button>
         </div>
         <input type="text" id="list-search" placeholder="Search counties…" oninput="filterList()">
         <div id="list-meta"></div>
@@ -215,7 +216,19 @@ const STATUS_BADGE = {
 let token = sessionStorage.getItem('victig_admin_token') || '';
 let counties = {}, allFlagged = [], allCountiesList = [], selectedFips = null, pendingFile = null;
 let svgSel, countyPaths = {}, topoData;
-let listMode = 'flagged'; // 'flagged' | 'all'
+let listMode = 'flagged'; // 'flagged' | 'all' | 'state'
+const STATE_NAMES = {
+  AL:'Alabama',AK:'Alaska',AZ:'Arizona',AR:'Arkansas',CA:'California',
+  CO:'Colorado',CT:'Connecticut',DE:'Delaware',FL:'Florida',GA:'Georgia',
+  HI:'Hawaii',ID:'Idaho',IL:'Illinois',IN:'Indiana',IA:'Iowa',
+  KS:'Kansas',KY:'Kentucky',LA:'Louisiana',ME:'Maine',MD:'Maryland',
+  MA:'Massachusetts',MI:'Michigan',MN:'Minnesota',MS:'Mississippi',MO:'Missouri',
+  MT:'Montana',NE:'Nebraska',NV:'Nevada',NH:'New Hampshire',NJ:'New Jersey',
+  NM:'New Mexico',NY:'New York',NC:'North Carolina',ND:'North Dakota',OH:'Ohio',
+  OK:'Oklahoma',OR:'Oregon',PA:'Pennsylvania',RI:'Rhode Island',SC:'South Carolina',
+  SD:'South Dakota',TN:'Tennessee',TX:'Texas',UT:'Utah',VT:'Vermont',
+  VA:'Virginia',WA:'Washington',WV:'West Virginia',WI:'Wisconsin',WY:'Wyoming',DC:'D.C.'
+};
 
 // ── Auth ──────────────────────────────────────────────────────────────────
 async function sha256(str){
@@ -344,29 +357,57 @@ function closeEdit(){
 // ── Save ──────────────────────────────────────────────────────────────────
 async function saveCounty(){
   if(!selectedFips) return;
+  const isState = selectedFips.startsWith('state:');
   const status = document.getElementById('edit-status').value;
   const description = document.getElementById('edit-desc').value.trim();
   const saveEl = document.getElementById('save-status');
-  saveEl.textContent = 'Saving…'; saveEl.className = 'status-loading';
+  saveEl.textContent = isState ? 'Saving all counties…' : 'Saving…';
+  saveEl.className = 'status-loading';
 
   try {
-    const res = await fetch('/admin/update-county', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({password:token, fips:selectedFips, status, description})
-    });
-    const data = await res.json();
-    if(res.ok){
-      counties[selectedFips].status = status;
-      counties[selectedFips].description = description;
-      saveEl.textContent = '✓ Saved — live on public map'; saveEl.className = 'save-ok';
-      // Update map color live
-      if(countyPaths[selectedFips])
-        d3.select(countyPaths[selectedFips]).attr('fill', getFill(selectedFips));
-      buildLists();
-      setTimeout(() => saveEl.textContent = '', 3500);
+    let res, data;
+    if(isState){
+      const abbrev = selectedFips.slice(6);
+      res = await fetch('/admin/update-state', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({password:token, state:abbrev, status, description})
+      });
+      data = await res.json();
+      if(res.ok){
+        // Update local counties
+        Object.keys(counties).forEach(fips => {
+          if(counties[fips].state === abbrev){
+            counties[fips].status = status;
+            counties[fips].description = description;
+            if(countyPaths[fips]) d3.select(countyPaths[fips]).attr('fill', getFill(fips));
+          }
+        });
+        saveEl.textContent = `✓ Updated ${data.updated} counties — live on public map`;
+        saveEl.className = 'save-ok';
+        buildLists();
+        setTimeout(() => saveEl.textContent = '', 4000);
+      } else {
+        saveEl.textContent = data.detail || 'Error'; saveEl.className = 'save-err';
+      }
     } else {
-      saveEl.textContent = data.detail || 'Error'; saveEl.className = 'save-err';
+      res = await fetch('/admin/update-county', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({password:token, fips:selectedFips, status, description})
+      });
+      data = await res.json();
+      if(res.ok){
+        counties[selectedFips].status = status;
+        counties[selectedFips].description = description;
+        saveEl.textContent = '✓ Saved — live on public map'; saveEl.className = 'save-ok';
+        if(countyPaths[selectedFips])
+          d3.select(countyPaths[selectedFips]).attr('fill', getFill(selectedFips));
+        buildLists();
+        setTimeout(() => saveEl.textContent = '', 3500);
+      } else {
+        saveEl.textContent = data.detail || 'Error'; saveEl.className = 'save-err';
+      }
     }
   } catch(e){
     saveEl.textContent = 'Network error'; saveEl.className = 'save-err';
@@ -389,6 +430,8 @@ function setMode(mode){
   listMode = mode;
   document.getElementById('tab-flagged').classList.toggle('active', mode==='flagged');
   document.getElementById('tab-all').classList.toggle('active', mode==='all');
+  document.getElementById('tab-state').classList.toggle('active', mode==='state');
+  document.getElementById('list-search').placeholder = mode==='state' ? 'Search states…' : 'Search counties…';
   document.getElementById('list-search').value = '';
   renderList();
 }
@@ -396,6 +439,7 @@ function setMode(mode){
 function filterList(){ renderList(); }
 
 function renderList(){
+  if(listMode === 'state'){ renderStateList(); return; }
   const q = document.getElementById('list-search').value.toLowerCase();
   const src = listMode === 'flagged' ? allFlagged : allCountiesList;
   const filtered = q ? src.filter(([,c]) => c.name?.toLowerCase().includes(q) || c.state?.toLowerCase().includes(q)) : src;
@@ -414,6 +458,61 @@ function renderList(){
   }).join('');
   if(filtered.length > 200) document.getElementById('county-list').innerHTML +=
     `<div style="padding:8px;font-size:11px;color:#aaa;text-align:center">Showing first 200 — type to narrow down</div>`;
+}
+
+function renderStateList(){
+  const q = document.getElementById('list-search').value.toLowerCase();
+  // Build state summary
+  const stateSummary = {};
+  Object.values(counties).forEach(c => {
+    const s = c.state;
+    if(!s) return;
+    if(!stateSummary[s]) stateSummary[s] = {total:0, flagged:0, worstStatus:'ok'};
+    stateSummary[s].total++;
+    if(c.status && c.status !== 'ok'){
+      stateSummary[s].flagged++;
+      const order = {significant:0,high_tat:1,delay:2,ok:3};
+      if((order[c.status]||9) < (order[stateSummary[s].worstStatus]||9))
+        stateSummary[s].worstStatus = c.status;
+    }
+  });
+  const states = Object.entries(STATE_NAMES)
+    .filter(([ab,name]) => !q || ab.toLowerCase().includes(q) || name.toLowerCase().includes(q))
+    .sort((a,b) => a[1].localeCompare(b[1]));
+  document.getElementById('list-meta').textContent = `${states.length} states`;
+  document.getElementById('county-list').innerHTML = states.map(([ab,name]) => {
+    const s = stateSummary[ab] || {total:0,flagged:0,worstStatus:'ok'};
+    const b = STATUS_BADGE[s.worstStatus] || {};
+    const badge = s.flagged > 0
+      ? `<span class="flag-badge" style="background:${b.bg};color:${b.fg}">${s.flagged} flagged</span>` : '';
+    return `<div class="flag-row${selectedFips==='state:'+ab?' selected':''}" data-fips="state:${ab}" onclick="selectState('${ab}')">
+      <div><span class="flag-name">${name} (${ab})</span>${badge}</div>
+      <div class="flag-desc">${s.total} counties total</div>
+    </div>`;
+  }).join('');
+}
+
+function selectState(abbrev){
+  // Deselect old county
+  if(selectedFips && countyPaths[selectedFips])
+    d3.select(countyPaths[selectedFips]).classed('selected-county', false);
+  selectedFips = 'state:' + abbrev;
+
+  // Count counties
+  const stateCounties = Object.entries(counties).filter(([,c]) => c.state === abbrev);
+  const flagged = stateCounties.filter(([,c]) => c.status && c.status !== 'ok');
+
+  document.getElementById('edit-title').textContent = `${STATE_NAMES[abbrev] || abbrev} — All Counties`;
+  document.getElementById('edit-sub').textContent =
+    `${stateCounties.length} counties · ${flagged.length} currently flagged · changes apply to ALL counties in this state`;
+  document.getElementById('edit-status').value = flagged.length > 0 ? (flagged[0][1].status || 'delay') : 'ok';
+  document.getElementById('edit-desc').value = flagged.length > 0 ? (flagged[0][1].description || '') : '';
+  document.getElementById('save-status').textContent = '';
+  document.getElementById('edit-panel').classList.add('open');
+  document.getElementById('map-hint').style.display = 'none';
+
+  document.querySelectorAll('.flag-row').forEach(r => r.classList.remove('selected'));
+  document.querySelector(`.flag-row[data-fips="state:${abbrev}"]`)?.classList.add('selected');
 }
 
 // ── CSV Import ────────────────────────────────────────────────────────────
