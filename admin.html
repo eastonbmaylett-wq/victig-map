@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Victig Map — Admin</title>
+<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f4f6f8;color:#222;min-height:100vh}
+
+/* Login */
+#login-screen{display:flex;align-items:center;justify-content:center;min-height:100vh;background:#f4f6f8}
+#login-box{background:white;border-radius:12px;padding:36px;width:360px;box-shadow:0 4px 24px rgba(0,0,0,.12);text-align:center}
+#login-box h1{font-size:20px;color:#1a2b45;margin-bottom:6px}
+#login-box p{font-size:13px;color:#888;margin-bottom:24px}
+#login-box input{width:100%;padding:10px 14px;border-radius:7px;border:1.5px solid #ddd;font-size:15px;margin-bottom:12px;text-align:center;letter-spacing:2px}
+#login-box input:focus{outline:none;border-color:#1a2b45}
+#login-error{color:#cf4027;font-size:12px;margin-bottom:10px;min-height:16px}
+#login-btn{width:100%;padding:10px;background:#1a2b45;color:white;border:none;border-radius:7px;font-size:14px;font-weight:600;cursor:pointer}
+#login-btn:hover{background:#253d61}
+
+/* Admin UI */
+#admin-ui{display:none}
+
+/* Header */
+#header{background:#1a2b45;color:white;padding:12px 24px;display:flex;align-items:center;justify-content:space-between}
+#header h1{font-size:16px;font-weight:600}
+#header .sub{font-size:11px;opacity:.6;margin-top:2px}
+#logout-btn{padding:5px 14px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);color:white;border-radius:5px;cursor:pointer;font-size:12px}
+#logout-btn:hover{background:rgba(255,255,255,.2)}
+
+/* Layout */
+#body{display:grid;grid-template-columns:340px 1fr;height:calc(100vh - 52px)}
+
+/* Left panel */
+#left-panel{background:white;border-right:1px solid #e0e4ea;display:flex;flex-direction:column;overflow:hidden}
+
+/* Import section */
+#import-section{padding:18px;border-bottom:1px solid #f0f0f0}
+#import-section h2{font-size:13px;font-weight:600;color:#1a2b45;margin-bottom:12px}
+#drop-zone{border:2px dashed #d0d4da;border-radius:8px;padding:20px;text-align:center;cursor:pointer;transition:all .15s;background:#fafbfc}
+#drop-zone:hover,#drop-zone.drag-over{border-color:#1a2b45;background:#f0f4ff}
+#drop-zone .icon{font-size:28px;margin-bottom:6px}
+#drop-zone p{font-size:12px;color:#888}
+#drop-zone strong{color:#1a2b45;font-size:13px}
+#file-input{display:none}
+#import-status{margin-top:10px;font-size:12px;min-height:18px}
+#import-btn{width:100%;margin-top:8px;padding:8px;background:#1a2b45;color:white;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;display:none}
+#import-btn:hover{background:#253d61}
+.status-ok{color:#155724} .status-err{color:#721c24} .status-loading{color:#856404}
+
+/* Flagged counties list */
+#flagged-section{flex:1;overflow:hidden;display:flex;flex-direction:column;padding:14px 18px 0}
+#flagged-section h2{font-size:13px;font-weight:600;color:#1a2b45;margin-bottom:10px;flex-shrink:0}
+#flagged-search{width:100%;padding:6px 10px;border-radius:6px;border:1.5px solid #ddd;font-size:12px;margin-bottom:8px;flex-shrink:0}
+#flagged-search:focus{outline:none;border-color:#1a2b45}
+#flagged-list{flex:1;overflow-y:auto;margin:0 -18px;padding:0 18px 14px}
+.flag-row{padding:8px 10px;border-radius:6px;cursor:pointer;border-bottom:1px solid #f5f5f5;transition:background .1s}
+.flag-row:hover{background:#f5f7ff}
+.flag-row.selected{background:#eef2ff}
+.flag-name{font-size:12px;font-weight:600;color:#222}
+.flag-status{display:inline-block;padding:1px 7px;border-radius:10px;font-size:10px;font-weight:700;text-transform:uppercase;margin-left:5px}
+.flag-desc{font-size:11px;color:#888;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* Right panel — edit form */
+#right-panel{padding:24px;overflow-y:auto}
+#edit-placeholder{display:flex;align-items:center;justify-content:center;height:100%;color:#bbb;font-size:14px;text-align:center}
+#edit-form{display:none;max-width:540px}
+#edit-form h2{font-size:16px;color:#1a2b45;margin-bottom:4px}
+#edit-form .county-sub{font-size:12px;color:#888;margin-bottom:18px}
+.form-label{font-size:12px;font-weight:600;color:#555;margin-bottom:5px;display:block}
+#edit-status{width:100%;padding:8px 10px;border-radius:6px;border:1.5px solid #ddd;font-size:13px;margin-bottom:16px}
+#edit-desc{width:100%;height:120px;padding:9px 11px;border-radius:6px;border:1.5px solid #ddd;font-size:13px;resize:vertical;margin-bottom:16px;line-height:1.5}
+#edit-status:focus,#edit-desc:focus{outline:none;border-color:#1a2b45}
+.form-hint{font-size:11px;color:#aaa;margin-top:-12px;margin-bottom:16px}
+#save-btn{padding:9px 24px;background:#1a2b45;color:white;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600}
+#save-btn:hover{background:#253d61}
+#save-status{font-size:12px;margin-left:12px}
+.save-ok{color:#155724} .save-err{color:#721c24}
+
+/* Map preview */
+#map-preview{width:100%;height:220px;background:#f8f9fa;border-radius:8px;margin-bottom:18px;border:1px solid #e0e4ea;overflow:hidden}
+#map-preview svg{width:100%;height:100%}
+</style>
+</head>
+<body>
+
+<!-- Login -->
+<div id="login-screen">
+  <div id="login-box">
+    <h1>🔒 Victig Map Admin</h1>
+    <p>Sign in to manage county statuses and import data</p>
+    <input type="password" id="pw-input" placeholder="Password" onkeydown="if(event.key==='Enter')doLogin()">
+    <div id="login-error"></div>
+    <button id="login-btn" onclick="doLogin()">Sign In</button>
+  </div>
+</div>
+
+<!-- Admin UI -->
+<div id="admin-ui">
+  <div id="header">
+    <div>
+      <h1>Victig Map — Admin Panel</h1>
+      <div class="sub" id="data-date"></div>
+    </div>
+    <div style="display:flex;gap:10px;align-items:center">
+      <a href="/" target="_blank" style="color:rgba(255,255,255,.7);font-size:12px;text-decoration:none">↗ View public map</a>
+      <button id="logout-btn" onclick="doLogout()">Sign Out</button>
+    </div>
+  </div>
+
+  <div id="body">
+    <!-- Left -->
+    <div id="left-panel">
+      <div id="import-section">
+        <h2>📥 Import Monthly Data</h2>
+        <div id="drop-zone" onclick="document.getElementById('file-input').click()"
+             ondragover="event.preventDefault();this.classList.add('drag-over')"
+             ondragleave="this.classList.remove('drag-over')"
+             ondrop="handleDrop(event)">
+          <div class="icon">📂</div>
+          <strong id="drop-filename">Drop CSV here or click to browse</strong>
+          <p>Export from IS → drag here → map updates for everyone</p>
+        </div>
+        <input type="file" id="file-input" accept=".csv" onchange="handleFile(this.files[0])">
+        <div id="import-status"></div>
+        <button id="import-btn" onclick="doImport()">Upload & Update Map</button>
+      </div>
+
+      <div id="flagged-section">
+        <h2>🚩 Flagged Counties (<span id="flagged-count">0</span>)</h2>
+        <input type="text" id="flagged-search" placeholder="Search counties…" oninput="filterFlagged()">
+        <div id="flagged-list"></div>
+      </div>
+    </div>
+
+    <!-- Right -->
+    <div id="right-panel">
+      <div id="edit-placeholder">
+        <div>
+          <div style="font-size:32px;margin-bottom:10px">🗺️</div>
+          Select a county from the list to edit its status and description
+        </div>
+      </div>
+      <div id="edit-form">
+        <h2 id="edit-title"></h2>
+        <div class="county-sub" id="edit-sub"></div>
+        <label class="form-label">Status</label>
+        <select id="edit-status">
+          <option value="ok">✅ No Delay</option>
+          <option value="delay">🟡 Delay</option>
+          <option value="high_tat">🟠 Avg TAT &gt;14 Days</option>
+          <option value="significant">🔴 Significant Delay</option>
+        </select>
+        <label class="form-label">Description / Notes</label>
+        <textarea id="edit-desc" placeholder="Explain the delay, expected resolution, etc…"></textarea>
+        <div class="form-hint">Shown publicly when someone clicks this county on the map.</div>
+        <button id="save-btn" onclick="saveCounty()">Save Changes</button>
+        <span id="save-status"></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const PW_HASH = 'b3121997c76507dc7adcf3ca13ee60d519cbc3c72a176527e8ba575fc13f3406';
+const STATUS_COLORS = {
+  ok:          {badge:'#d4edda',text:'#155724',label:'No Delay'},
+  delay:       {badge:'#fff3cd',text:'#856404',label:'Delay'},
+  high_tat:    {badge:'#ffe5cc',text:'#7a3600',label:'TAT >14d'},
+  significant: {badge:'#f8d7da',text:'#721c24',label:'Significant'},
+};
+
+let token = sessionStorage.getItem('victig_admin_token') || '';
+let counties = {};
+let allFlagged = [];
+let selectedFips = null;
+let pendingFile = null;
+
+async function sha256(str){
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+
+async function doLogin(){
+  const pw = document.getElementById('pw-input').value;
+  const hash = await sha256(pw);
+  if(hash === PW_HASH){
+    token = pw;
+    sessionStorage.setItem('victig_admin_token', pw);
+    document.getElementById('login-screen').style.display = 'none';
+    document.getElementById('admin-ui').style.display = 'block';
+    loadData();
+  } else {
+    document.getElementById('login-error').textContent = 'Incorrect password.';
+    document.getElementById('pw-input').value = '';
+  }
+}
+
+function doLogout(){
+  sessionStorage.removeItem('victig_admin_token');
+  location.reload();
+}
+
+async function loadData(){
+  const res = await fetch('/county-data.json');
+  const data = await res.json();
+  counties = data.counties;
+  document.getElementById('data-date').textContent = data.maxDate ? `Data through ${data.maxDate}` : '';
+  buildFlaggedList();
+}
+
+function buildFlaggedList(){
+  allFlagged = Object.entries(counties)
+    .filter(([,c]) => c.status !== 'ok')
+    .sort((a,b) => {
+      const order = {significant:0,high_tat:1,delay:2};
+      return (order[a[1].status]||9) - (order[b[1].status]||9);
+    });
+  document.getElementById('flagged-count').textContent = allFlagged.length;
+  renderFlagged(allFlagged);
+}
+
+function renderFlagged(list){
+  const sc = STATUS_COLORS;
+  document.getElementById('flagged-list').innerHTML = list.map(([fips,c]) => `
+    <div class="flag-row ${fips===selectedFips?'selected':''}" onclick="selectCounty('${fips}')">
+      <div>
+        <span class="flag-name">${c.name}, ${c.state}</span>
+        <span class="flag-status" style="background:${sc[c.status]?.badge};color:${sc[c.status]?.text}">${sc[c.status]?.label||c.status}</span>
+      </div>
+      <div class="flag-desc">${c.description || 'No description set'}</div>
+    </div>`).join('');
+}
+
+function filterFlagged(){
+  const q = document.getElementById('flagged-search').value.toLowerCase();
+  renderFlagged(allFlagged.filter(([,c]) =>
+    c.name.toLowerCase().includes(q) || c.state.toLowerCase().includes(q)
+  ));
+}
+
+function selectCounty(fips){
+  selectedFips = fips;
+  const c = counties[fips];
+  document.getElementById('edit-placeholder').style.display = 'none';
+  document.getElementById('edit-form').style.display = 'block';
+  document.getElementById('edit-title').textContent = `${c.name} County`;
+  document.getElementById('edit-sub').textContent = `${c.state} · FIPS ${fips}`;
+  document.getElementById('edit-status').value = c.status || 'ok';
+  document.getElementById('edit-desc').value = c.description || '';
+  document.getElementById('save-status').textContent = '';
+  // Highlight in list
+  document.querySelectorAll('.flag-row').forEach(el => el.classList.remove('selected'));
+  event?.currentTarget?.classList.add('selected');
+}
+
+async function saveCounty(){
+  if(!selectedFips) return;
+  const status = document.getElementById('edit-status').value;
+  const description = document.getElementById('edit-desc').value.trim();
+  const saveEl = document.getElementById('save-status');
+  saveEl.textContent = 'Saving…'; saveEl.className = 'status-loading';
+
+  try {
+    const res = await fetch('/admin/update-county', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({password: token, fips: selectedFips, status, description})
+    });
+    const data = await res.json();
+    if(res.ok){
+      counties[selectedFips].status = status;
+      counties[selectedFips].description = description;
+      saveEl.textContent = '✓ Saved'; saveEl.className = 'save-ok';
+      buildFlaggedList();
+    } else {
+      saveEl.textContent = data.detail || 'Error'; saveEl.className = 'save-err';
+    }
+  } catch(e){
+    saveEl.textContent = 'Network error'; saveEl.className = 'save-err';
+  }
+}
+
+// CSV Import
+function handleDrop(e){
+  e.preventDefault();
+  document.getElementById('drop-zone').classList.remove('drag-over');
+  handleFile(e.dataTransfer.files[0]);
+}
+
+function handleFile(file){
+  if(!file || !file.name.endsWith('.csv')){
+    setImportStatus('Please select a CSV file.', 'err'); return;
+  }
+  pendingFile = file;
+  document.getElementById('drop-filename').textContent = file.name;
+  document.getElementById('import-btn').style.display = 'block';
+  setImportStatus(`Ready to import: ${file.name}`, 'ok');
+}
+
+async function doImport(){
+  if(!pendingFile) return;
+  setImportStatus('Uploading and processing… this may take 30 seconds.', 'loading');
+  document.getElementById('import-btn').disabled = true;
+
+  const form = new FormData();
+  form.append('file', pendingFile);
+
+  try {
+    const res = await fetch(`/admin/upload?password=${encodeURIComponent(token)}`, {
+      method: 'POST', body: form
+    });
+    const data = await res.json();
+    if(res.ok){
+      setImportStatus('✓ Map updated successfully! Reloading data…', 'ok');
+      setTimeout(()=>{ loadData(); document.getElementById('import-btn').disabled=false; pendingFile=null; document.getElementById('drop-filename').textContent='Drop CSV here or click to browse'; document.getElementById('import-btn').style.display='none'; }, 1500);
+    } else {
+      setImportStatus('Error: ' + (data.detail||'Upload failed'), 'err');
+      document.getElementById('import-btn').disabled = false;
+    }
+  } catch(e){
+    setImportStatus('Network error during upload.', 'err');
+    document.getElementById('import-btn').disabled = false;
+  }
+}
+
+function setImportStatus(msg, type){
+  const el = document.getElementById('import-status');
+  el.textContent = msg;
+  el.className = type === 'ok' ? 'status-ok' : type === 'err' ? 'status-err' : 'status-loading';
+}
+
+// Auto-login if session exists
+if(token){
+  (async()=>{
+    const hash = await sha256(token);
+    if(hash === PW_HASH){
+      document.getElementById('login-screen').style.display='none';
+      document.getElementById('admin-ui').style.display='block';
+      loadData();
+    } else { sessionStorage.removeItem('victig_admin_token'); token=''; }
+  })();
+}
+</script>
+</body>
+</html>

@@ -186,9 +186,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     </div>
   </div>
 
-  <div id="admin-lock" onclick="adminUnlocked ? logoutAdmin() : showPwGate(null)">
-    <span id="lock-icon">🔒</span>
-  </div>
   <div id="legend">
     <div id="legend-buckets">
       <h4>TAT Status</h4>
@@ -450,7 +447,9 @@ function onCountyClick(event, d){
       ${rankPct !== null ? `<div class="p-rank">Faster than <strong>${rankPct}%</strong> of counties (#${s.rank} of ${s.total.toLocaleString()})</div>` : ''}`;
   }
 
-  const descHtml = c.description ? `<div class="p-desc">${c.description}</div>` : '';
+  const descHtml = c.description
+    ? `<div class="p-desc">${c.description}</div>`
+    : `<div class="p-desc" style="border-left-color:#55ae5c;color:#888">No active court delays reported for this county.</div>`;
 
   const latestHtml = c.latest ? `
     <div class="p-latest">
@@ -465,7 +464,7 @@ function onCountyClick(event, d){
     <span class="p-badge" style="background:${sc.badge};color:${sc.text}">${sc.label}</span>
     ${perfHtml}
     ${statsHtml}${latestHtml}${descHtml}
-${adminUnlocked ? `<button class="edit-btn" onclick="openAdmin('${d.id}')">✏️ Edit Status / Notes</button>` : ''}`;
+`;
 
   const popup = document.getElementById('popup');
   const wrap  = document.getElementById('map-wrap');

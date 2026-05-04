@@ -43,6 +43,30 @@ async def upload_csv(password: str, file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=result.stderr)
     return {"ok": True, "message": "Map data updated successfully"}
 
+@app.get("/admin")
+def admin_page():
+    return FileResponse(BASE / "admin.html")
+
+@app.post("/admin/update-county")
+async def update_county(payload: dict):
+    check_auth(payload.get("password",""))
+    fips        = payload.get("fips")
+    status      = payload.get("status", "ok")
+    description = payload.get("description", "")
+    if not fips:
+        raise HTTPException(status_code=400, detail="fips required")
+    # Load, update, save
+    with open(DATA_FILE) as f:
+        data = json.load(f)
+    if fips not in data["counties"]:
+        raise HTTPException(status_code=404, detail="County not found")
+    data["counties"][fips]["status"]           = status
+    data["counties"][fips]["description"]       = description
+    data["counties"][fips]["_admin_override"]   = True
+    with open(DATA_FILE, "w") as f:
+        json.dump(data, f)
+    return {"ok": True}
+
 @app.get("/api/version")
 def version():
     return {"version": "1.0.0"}
