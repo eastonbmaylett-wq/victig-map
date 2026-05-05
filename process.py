@@ -341,6 +341,13 @@ for st, vals in state_all_tats.items():
         'periods': periods,
     }
 
+# Rank states by avg TAT (ascending = faster is better, rank 1 = fastest)
+state_ranked = sorted(state_avg.items(), key=lambda x: x[1]['avg'])
+state_total  = len(state_ranked)
+for rank, (st, _) in enumerate(state_ranked, 1):
+    state_avg[st]['rank']  = rank
+    state_avg[st]['total'] = state_total
+
 # ── Match jurisdictions to FIPS ───────────────────────────────────────────
 def norm(s): return re.sub(r'[^a-z]','',s.lower())
 
