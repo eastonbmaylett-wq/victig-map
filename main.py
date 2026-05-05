@@ -14,8 +14,18 @@ app.add_middleware(
 )
 
 BASE = Path(__file__).parent
-DATA_FILE   = BASE / "county-data.json"
-CONFIG_FILE = BASE / "site-config.json"
+DATA_DIR    = Path(os.environ.get("DATA_DIR", "/data"))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+DATA_FILE   = DATA_DIR / "county-data.json"
+CONFIG_FILE = DATA_DIR / "site-config.json"
+
+# Seed data files from repo if not yet on volume
+for _f in ["county-data.json", "site-config.json"]:
+    _src = BASE / _f
+    _dst = DATA_DIR / _f
+    if _src.exists() and not _dst.exists():
+        import shutil as _shutil
+        _shutil.copy2(_src, _dst)
 PW_HASH   = "b3121997c76507dc7adcf3ca13ee60d519cbc3c72a176527e8ba575fc13f3406"
 
 # ── Security headers ──────────────────────────────────────────────────────

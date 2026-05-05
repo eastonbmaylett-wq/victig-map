@@ -7,12 +7,14 @@ Supports:
                       Unique Jurisdiction, Avg. TAT, Max. TAT, Min. TAT, >2 weeks TAT, <0.007 TAT
 Usage: python3 process.py <path-to-csv-or-xlsx>
 """
-import csv, json, io, re, sys
+import csv, json, io, re, sys, os
 from datetime import datetime
 from collections import defaultdict
 from pathlib import Path
 
 BASE     = Path(__file__).parent
+DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 IN_PATH  = sys.argv[1] if len(sys.argv) > 1 else str(BASE / "uploaded.csv")
 IN_FILE  = Path(IN_PATH)
 
@@ -377,7 +379,7 @@ for fips, c in county_db.items():
     c['state_avg'] = state_avg.get(st)  # None if no data for that state
 
 # ── Preserve admin overrides ──────────────────────────────────────────────
-existing_file = BASE / "county-data.json"
+existing_file = DATA_DIR / "county-data.json"
 if existing_file.exists():
     with open(existing_file) as f:
         existing = json.load(f)
@@ -394,7 +396,7 @@ out = {
     'stateAvg':    state_avg,   # top-level for easy frontend lookup
     'counties':    county_db,
 }
-with open(BASE / "county-data.json", 'w') as f:
+with open(DATA_DIR / "county-data.json", 'w') as f:
     json.dump(out, f)
 
 matched_states = len(state_avg)
