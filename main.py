@@ -14,10 +14,13 @@ app.add_middleware(
 )
 
 BASE = Path(__file__).parent
-DATA_DIR    = Path(os.environ.get("DATA_DIR", "/data"))
+DATA_DIR    = Path(os.environ.get("DATA_DIR", "/data" if Path("/data").exists() or os.environ.get("RAILWAY_ENVIRONMENT") else str(BASE)))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 DATA_FILE   = DATA_DIR / "county-data.json"
 CONFIG_FILE = DATA_DIR / "site-config.json"
+
+from fastapi.staticfiles import StaticFiles
+app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 
 # Seed data files from repo if not yet on volume
 for _f in ["county-data.json", "site-config.json"]:

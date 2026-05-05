@@ -1,0 +1,22 @@
+
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#fff}
+#wrap{width:100%;height:100%;position:relative}
+svg{width:100%;height:100%}
+.county{stroke:#e8e8e8;stroke-width:.3;cursor:pointer}
+.county:hover{stroke:#333;stroke-width:1}
+.state-border{fill:none;stroke:white;stroke-width:1.8;pointer-events:none}
+#legend{position:absolute;bottom:10px;left:10px;background:white;border-radius:7px;padding:8px 11px;box-shadow:0 2px 8px rgba(0,0,0,.12);font-size:11px;line-height:1.9}
+.leg-row{display:flex;align-items:center;gap:6px}
+.leg-sw{width:10px;height:10px;border-radius:2px}
+#tooltip{position:absolute;background:rgba(20,30,50,.88);color:white;border-radius:6px;padding:5px 10px;font-size:12px;pointer-events:none;display:none;white-space:nowrap}
+#popup{position:absolute;background:white;border-radius:9px;box-shadow:0 4px 20px rgba(0,0,0,.18);padding:14px;width:240px;z-index:200;display:none;font-size:12px}
+#popup-close{position:absolute;top:7px;right:9px;cursor:pointer;font-size:15px;color:#bbb}
+#popup h3{font-size:13px;color:#1a2b45;margin-bottom:6px;padding-right:16px}
+.p-badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;margin-bottom:7px;text-transform:uppercase}
+.p-stat{color:#555;margin-bottom:2px}
+.p-desc{font-size:11px;color:#555;background:#f8f8f8;border-radius:5px;padding:5px 7px;line-height:1.4;border-left:3px solid #dea922;margin-top:6px}
+#brand{position:absolute;bottom:10px;right:10px;font-size:10px;color:#bbb}
+#data-info{position:absolute;top:8px;right:10px;font-size:10px;color:#aaa;background:rgba(255,255,255,.8);padding:2px 7px;border-radius:4px}
+#zoom-btns{position:absolute;top:8px;left:10px;display:flex;flex-direction:column;gap:4px}
+#zoom-btns button{width:26px;height:26px;border:none;border-radius:5px;background:white;box-shadow:0 1px 4px rgba(0,0,0,.15);font-size:14px;cursor:pointer;color:#333}
