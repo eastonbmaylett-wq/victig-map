@@ -15,7 +15,10 @@ app.add_middleware(
 
 BASE = Path(__file__).parent
 DATA_DIR    = Path(os.environ.get("DATA_DIR", "/data" if Path("/data").exists() or os.environ.get("RAILWAY_ENVIRONMENT") else str(BASE)))
-DATA_DIR.mkdir(parents=True, exist_ok=True)
+try:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+except Exception:
+    DATA_DIR = BASE  # fallback to app directory if /data isn't writable
 DATA_FILE   = DATA_DIR / "county-data.json"
 CONFIG_FILE = DATA_DIR / "site-config.json"
 
@@ -55,17 +58,23 @@ def _log_event(request: Request, event: str, county_id=None, county=None, state=
 
 # ── Cache-bust version: hash of all static files combined
 import hashlib as _hashlib
-_static_hash = _hashlib.md5(
-    b''.join(f.read_bytes() for f in sorted((BASE / 'static').glob('*')) if f.is_file())
-).hexdigest()[:8]
+try:
+    _static_hash = _hashlib.md5(
+        b''.join(f.read_bytes() for f in sorted((BASE / 'static').glob('*')) if f.is_file())
+    ).hexdigest()[:8]
+except Exception:
+    _static_hash = 'dev'
 
 # Seed data files from repo if not yet on volume
-for _f in ["county-data.json", "site-config.json"]:
-    _src = BASE / _f
-    _dst = DATA_DIR / _f
-    if _src.exists() and not _dst.exists():
-        import shutil as _shutil
-        _shutil.copy2(_src, _dst)
+try:
+    for _f in ["county-data.json", "site-config.json"]:
+        _src = BASE / _f
+        _dst = DATA_DIR / _f
+        if _src.exists() and not _dst.exists():
+            import shutil as _shutil
+            _shutil.copy2(_src, _dst)
+except Exception:
+    pass
 PW_HASH   = "b3121997c76507dc7adcf3ca13ee60d519cbc3c72a176527e8ba575fc13f3406"
 
 # ── Security headers ──────────────────────────────────────────────────────
