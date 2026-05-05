@@ -356,6 +356,16 @@ async function init(){
   topoData = topo;
   counties = data.counties;
 
+  // Enrich counties with state avg from top-level stateAvg
+  // (county-level state_avg may be absent in older county-data.json)
+  if (data.stateAvg) {
+    for (const [fips, c] of Object.entries(counties)) {
+      if (!c.state_avg && c.state && data.stateAvg[c.state]) {
+        c.state_avg = data.stateAvg[c.state];
+      }
+    }
+  }
+
   // Apply local overrides
   for(const [fips,ov] of Object.entries(localOverrides)){
     if(counties[fips]){
