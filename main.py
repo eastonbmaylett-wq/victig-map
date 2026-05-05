@@ -281,26 +281,15 @@ SKIP_PARAS = {
     'SINCERELY,','PLEASE LET US KNOW','IT\'S AN HONOR','THANK YOU',
 }
 
-def summarize_desc(text, max_chars=280):
-    """Take the first 1-2 sentences, cap at max_chars."""
-    if len(text) <= max_chars:
-        return text
-    # Split on sentence endings
-    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
-    out = ''
-    for sent in sentences:
-        if not out:
-            out = sent
-        elif len(out) + len(sent) + 1 <= max_chars:
-            out += ' ' + sent
-        else:
-            break
-    if len(out) > max_chars:
-        out = out[:max_chars-1].rsplit(' ', 1)[0] + '…'
-    return out
-
 def parse_desc_docx(raw_bytes):
-    """Parse Victig court delays Word doc -> list of (state_abbrev, county_name_or_None, description)"""
+    """Parse Victig court delays Word doc -> list of (state_abbrev, county_name_or_None, description)
+    Stores text word-for-word. Handles:
+    - Inline single county:   'MACON COUNTY is closed due to...'
+    - Inline multi-county:    'COCONINO, NAVAJO, PINAL and YAVAPAI COUNTIES are...'
+    - Standalone sub-headers: 'LOS ANGELES' followed by description paragraphs
+    - State-level notes:      paragraphs with no county match
+    - 'ALL [STATE] COUNTIES': treated as state-level
+    """
     import zipfile, xml.etree.ElementTree as ET
     with zipfile.ZipFile(io.BytesIO(raw_bytes)) as z:
         xml_data = z.read('word/document.xml').decode('utf-8')
@@ -311,42 +300,97 @@ def parse_desc_docx(raw_bytes):
         text = ''.join(r.text or '' for r in p.iter(f'{{{W}}}t')).strip()
         if text: paras.append(text)
 
-    results = []   # (state_abbrev, county_or_None, description)
-    current_state = None
+    results = []                # (state_abbrev, county_or_None, description)
+    current_state  = None
+    current_county = None       # set by standalone sub-headers like 'LOS ANGELES'
+    county_paras   = []         # description paragraphs collected under a sub-header county
+
+    def flush_county():
+        """Emit any collected sub-header county paragraphs as a single entry."""
+        nonlocal current_county, county_paras
+        if county_paras and current_state:
+            state_ab = STATE_ABBREV.get(current_state)
+            if state_ab:
+                results.append((state_ab, current_county, ' '.join(county_paras)))
+        current_county = None
+        county_paras   = []
+
+    COUNTY_RE  = re.compile(r'\b([A-Z][A-Z\s]+?)\s+COUNTY\b')
+    COUNTIES_RE = re.compile(r'\bCOUNTIES\b')
 
     for para in paras:
         upper = para.upper().strip()
-        if upper in SKIP_PARAS: continue
+
+        # ── Skip boilerplate ──────────────────────────────────────────────
+        # Normalize smart quotes so curly apostrophes match SKIP_PARAS strings
+        upper_norm = upper.replace('\u2019', "'").replace('\u2018', "'")
+        if upper_norm in SKIP_PARAS: continue
+        if any(skip in upper_norm for skip in SKIP_PARAS): continue
+
+        # ── State header ─────────────────────────────────────────────────
         if upper in STATE_NAMES_FULL:
-            current_state = upper; continue
+            flush_county()
+            current_state = upper
+            continue
+
         if not current_state: continue
         state_ab = STATE_ABBREV.get(current_state)
         if not state_ab: continue
 
-        # Skip obvious footer/intro lines
-        if any(skip in para.upper() for skip in SKIP_PARAS): continue
-        if len(para) < 30 and not re.search(r'[A-Z]{3,}', para): continue
+        # ── Standalone all-caps sub-header: 'LOS ANGELES' ────────────────
+        # Must check BEFORE the length filter — headers like 'LOS ANGELES' are short
+        if len(para) <= 50 and re.match(r'^[A-Z][A-Z\s]+$', para):
+            flush_county()
+            county = re.sub(r'\s+COUNTY$', '', upper).strip()
+            current_county = county
+            continue
 
-        # Extract county names — handle lists: "COCONINO, NAVAJO, PINAL and YAVAPAI COUNTIES"
-        counties = []
-        single = re.findall(r'\b([A-Z][A-Z\s]+?)\s+COUNTY\b', para)
-        if single:
-            counties = [c.strip() for c in single if 2 <= len(c.strip()) <= 40]
-        elif 'COUNTIES' in para.upper():
-            # Grab all words before COUNTIES: "COCONINO, NAVAJO, PINAL and YAVAPAI COUNTIES"
-            m = re.search(r'([A-Z][A-Z,\s]+?)\s+COUNTIES', para)
+        # Skip very short lines with no substance (after sub-header check)
+        if len(para) < 20: continue
+
+        # ── Multi-county sentence: '... COUNTIES ...' ─────────────────────
+        if COUNTIES_RE.search(para):
+            flush_county()
+            m = re.search(r'([\w\s,]+?)\s+COUNTIES\b', para)
             if m:
-                parts = re.split(r',|\band\b', m.group(1), flags=re.I)
-                counties = [p.strip() for p in parts if p.strip() and 2 <= len(p.strip()) <= 40]
+                raw_list = m.group(1).strip()
+                # Normalize ', and' → ',' before splitting so 'LUCAS, and MEDINA' works
+                raw_list = re.sub(r',\s+and\s+', ', ', raw_list, flags=re.I)
+                parts = re.split(r',\s*|\s+and\s+', raw_list, flags=re.I)
+                counties = [
+                    p.strip().upper() for p in parts
+                    if p.strip()
+                    and 2 <= len(p.strip()) <= 20          # real county names are short
+                    and re.match(r'^[A-Z\s]+$', p.strip().upper())  # no digits or symbols
+                    and p.strip().upper() not in STATE_NAMES_FULL
+                    and not p.strip().upper().startswith('ALL')
+                ]
+                if counties:
+                    for c in counties:
+                        results.append((state_ab, c, para))
+                    continue
+            # Fallback: treat as state-level (e.g. 'ALL SOUTH CAROLINA COUNTIES')
+            results.append((state_ab, None, para))
+            continue
 
-        desc = summarize_desc(para)
+        # ── Single COUNTY inline: 'MACON COUNTY is closed...' ────────────
+        single = COUNTY_RE.findall(para)
+        if single:
+            flush_county()
+            for c in single:
+                c = c.strip()
+                if 2 <= len(c) <= 40:
+                    results.append((state_ab, c, para))
+            continue
 
-        if counties:
-            for c in counties:
-                results.append((state_ab, c.strip(), desc))
-        elif len(para) > 60:  # state-level note
-            results.append((state_ab, None, desc))
+        # ── Regular description paragraph ─────────────────────────────────
+        if len(para) >= 30:
+            if current_county is not None:
+                county_paras.append(para)   # collect under sub-header county
+            else:
+                results.append((state_ab, None, para))  # state-level note
 
+    flush_county()  # emit any trailing sub-header county
     return results
 
 @app.post("/admin/upload-desc-doc")
