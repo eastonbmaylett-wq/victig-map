@@ -370,6 +370,10 @@ function onCountyClick(event, d){
         </div>`).join('')}
     </div>` : '';
 
+  // Log county click (fire-and-forget)
+  fetch('/api/log/click', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({fips: d.id, county: c.name, state: c.state})}).catch(()=>{});
+
   document.getElementById('popup-body').innerHTML = `
     <h3>${c.name} County, ${c.state}</h3>
     <span class="p-badge" style="background:${sc.badge};color:${sc.text}">${sc.label}</span>

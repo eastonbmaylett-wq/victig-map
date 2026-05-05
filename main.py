@@ -1,7 +1,7 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
-import subprocess, shutil, os, hashlib, json, csv, io
+import subprocess, shutil, os, hashlib, json, csv, io, sqlite3, datetime
 from pathlib import Path
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)  # disable API docs
@@ -22,7 +22,38 @@ CONFIG_FILE = DATA_DIR / "site-config.json"
 from fastapi.staticfiles import StaticFiles
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 
-# Cache-bust version: hash of all static files combined
+# ── Analytics DB ────────────────────────────────────────────────────────────
+ANALYTICS_DB = DATA_DIR / "analytics.db"
+
+def _analytics_conn():
+    con = sqlite3.connect(str(ANALYTICS_DB))
+    con.execute("""CREATE TABLE IF NOT EXISTS events (
+        id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts        TEXT NOT NULL,
+        ip        TEXT,
+        ua        TEXT,
+        event     TEXT NOT NULL,
+        county_id TEXT,
+        county    TEXT,
+        state     TEXT
+    )""")
+    con.commit()
+    return con
+
+def _log_event(request: Request, event: str, county_id=None, county=None, state=None):
+    try:
+        ip = request.headers.get('x-forwarded-for', request.client.host).split(',')[0].strip()
+        ua = request.headers.get('user-agent', '')[:200]
+        ts = datetime.datetime.utcnow().isoformat()
+        con = _analytics_conn()
+        con.execute("INSERT INTO events (ts,ip,ua,event,county_id,county,state) VALUES (?,?,?,?,?,?,?)",
+                    (ts, ip, ua, event, county_id, county, state))
+        con.commit()
+        con.close()
+    except Exception:
+        pass  # never break the map over analytics
+
+# ── Cache-bust version: hash of all static files combined
 import hashlib as _hashlib
 _static_hash = _hashlib.md5(
     b''.join(f.read_bytes() for f in sorted((BASE / 'static').glob('*')) if f.is_file())
@@ -89,7 +120,8 @@ def _inject_version(html_path: Path) -> Response:
                     headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
 
 @app.get("/")
-def root():
+def root(request: Request):
+    _log_event(request, 'visit')
     return _inject_version(BASE / "index.html")
 
 @app.get("/county-data.json")
@@ -148,7 +180,8 @@ def admin_page():
     return _inject_version(BASE / "admin.html")
 
 @app.get("/embed")
-def embed_page():
+def embed_page(request: Request):
+    _log_event(request, 'embed')
     return _inject_version(BASE / "embed.html")
 
 
@@ -635,6 +668,26 @@ _START_TIME = str(int(_time.time()))  # changes every container restart / deploy
 @app.get("/api/version")
 def version():
     return {"version": _START_TIME}
+
+@app.post("/api/log/click")
+async def log_click(request: Request, payload: dict):
+    _log_event(request, 'click',
+               county_id=payload.get('fips'),
+               county=payload.get('county'),
+               state=payload.get('state'))
+    return {"ok": True}
+
+@app.get("/api/analytics")
+async def get_analytics(password: str):
+    check_auth(password)
+    con = _analytics_conn()
+    rows = con.execute("""
+        SELECT ts, ip, ua, event, county_id, county, state
+        FROM events ORDER BY ts DESC LIMIT 2000
+    """).fetchall()
+    con.close()
+    return [{"ts":r[0],"ip":r[1],"ua":r[2],"event":r[3],
+             "county_id":r[4],"county":r[5],"state":r[6]} for r in rows]
 
 @app.get("/test")
 def test_page():
