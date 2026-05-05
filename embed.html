@@ -135,6 +135,7 @@ function showPopup(ev,d){
   document.getElementById('popup-body').innerHTML=`
     <span class="p-badge" style="background:${sc.badge};color:${sc.text}">${sc.label}</span>
     ${p90?`<div class="p-stat">Avg TAT (90d): <b>${fmtTAT(p90.avg)}</b> &nbsp;|&nbsp; Max: ${fmtTAT(p90.max)}</div>`:''}
+    ${!p90&&c.state_avg?`<div class="p-stat" style="color:#888">🏙 ${c.state} statewide avg: <b>${fmtTAT(c.state_avg.avg)}</b> (${c.state_avg.count.toLocaleString()} searches)</div>`:''}
     ${lat?`<div class="p-stat" style="font-size:11px;color:#aaa">Last search: ${lat.date}</div>`:''}
     ${c.description?`<div class="p-desc">${c.description}</div>`:
       (c.status==='ok'||!c.status)?`<div style="font-size:11px;color:#55ae5c;margin-top:4px">✓ No active court delays</div>`:''}

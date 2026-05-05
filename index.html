@@ -534,8 +534,19 @@ function onCountyClick(event, d){
       </div>
       ${rankPct !== null ? `<div class="p-rank">Faster than <strong>${rankPct}%</strong> of all US counties (#${s.rank} of 3,231)</div>` : ''}
       ${c.precomp?.gt2weeks ? `<div style="font-size:10px;color:#de7612;margin-top:4px">⚠ ${c.precomp.gt2weeks} search${c.precomp.gt2weeks!==1?'es':''} exceeded 2 weeks</div>` : ''}
-      ${c.precomp?.lt10min ? `<div style="font-size:10px;color:#55ae5c;margin-top:2px">⚡ ${c.precomp.lt10min} search${c.precomp.lt10min!==1?'es':''} completed in under 10 min</div>` : ''}`;
+      ${c.precomp?.lt10min ? `<div style="font-size:10px;color:#55ae5c;margin-top:2px">⚡ ${c.precomp.lt10min} search${c.precomp.lt10min!==1?'es':''} completed in under 10 min</div>` : ''}
+      ${c.state_avg ? `<div style="font-size:10px;color:#888;margin-top:4px;border-top:1px solid #f0f0f0;padding-top:4px">🏙 ${c.state} statewide avg: <strong>${daysToReadable(c.state_avg.avg)}</strong> (${c.state_avg.count.toLocaleString()} searches)</div>` : ''}`;
   }
+
+  // For counties with no individual data, show state avg as reference
+  const stateAvgHtml = (!s && c.state_avg)
+    ? `<div class="p-latest" style="margin-bottom:8px">
+        <div class="p-latest-title" style="color:#888">🏙 ${c.state} Statewide Average <span style="font-weight:400;font-size:10px">(no county-level data)</span></div>
+        <div class="p-latest-row"><span class="p-latest-lbl">Avg TAT</span><span><b>${daysToReadable(c.state_avg.avg)}</b></span></div>
+        <div class="p-latest-row"><span class="p-latest-lbl">Searches</span><span>${c.state_avg.count.toLocaleString()}</span></div>
+        ${c.state_avg.periods?.['30d'] ? `<div class="p-latest-row"><span class="p-latest-lbl">Last 30d avg</span><span>${daysToReadable(c.state_avg.periods['30d'].avg)}</span></div>` : ''}
+      </div>`
+    : '';
 
   const descHtml = c.description
     ? `<div class="p-desc">${c.description}</div>`
@@ -564,7 +575,7 @@ function onCountyClick(event, d){
     <h3>${c.name} County, ${c.state}</h3>
     <span class="p-badge" style="background:${sc.badge};color:${sc.text}">${sc.label}</span>
     ${perfHtml}
-    ${statsHtml}${outHtml}${latestHtml}${descHtml}
+    ${statsHtml}${stateAvgHtml}${outHtml}${latestHtml}${descHtml}
 `;
 
   const popup = document.getElementById('popup');

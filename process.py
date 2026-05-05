@@ -315,6 +315,32 @@ if topo_file.exists():
                 'latest': None, 'precomp': None, 'outliers': None,
             }
 
+# ── Statewide averages ────────────────────────────────────────────────────
+# Group ALL rows by state prefix (e.g. 'MT-Lincoln County' → 'MT')
+# and compute average TAT across every search in that state.
+state_all_tats   = defaultdict(list)   # all rows, all time
+state_period_tats = defaultdict(lambda: defaultdict(list))
+
+for r in rows:
+    jur = r['jur']
+    if '-' not in jur: continue
+    st = jur.split('-', 1)[0].strip().upper()
+    if len(st) != 2: continue          # must be a 2-letter state code
+    state_all_tats[st].append(r['tat'])
+    age = (max_date - r['dt']).days
+    for label, days in [('30d',30),('60d',60),('90d',90),('180d',180)]:
+        if age <= days:
+            state_period_tats[st][label].append(r['tat'])
+
+state_avg = {}
+for st, vals in state_all_tats.items():
+    periods = {p: compute_stats(v) for p, v in state_period_tats[st].items()}
+    state_avg[st] = {
+        'avg':     round(sum(vals) / len(vals), 6),
+        'count':   len(vals),
+        'periods': periods,
+    }
+
 # ── Match jurisdictions to FIPS ───────────────────────────────────────────
 def norm(s): return re.sub(r'[^a-z]','',s.lower())
 
@@ -338,6 +364,11 @@ for fips, jur in sm_map.items():
     county_db[fips]['precomp']  = precomp.get(jur)
     county_db[fips]['outliers'] = outliers_by_jur.get(jur) or None
 
+# Attach state avg to every county (whether matched or not)
+for fips, c in county_db.items():
+    st = c.get('state', '')
+    c['state_avg'] = state_avg.get(st)  # None if no data for that state
+
 # ── Preserve admin overrides ──────────────────────────────────────────────
 existing_file = BASE / "county-data.json"
 if existing_file.exists():
@@ -353,9 +384,11 @@ if existing_file.exists():
 out = {
     'maxDate':     max_date.strftime('%Y-%m-%d'),
     'isNewFormat': is_new_format,
+    'stateAvg':    state_avg,   # top-level for easy frontend lookup
     'counties':    county_db,
 }
 with open(BASE / "county-data.json", 'w') as f:
     json.dump(out, f)
 
-print(f"Done. {len(sm_map)} counties matched out of {len(set(list(period_stats.keys())+list(precomp.keys())))} unique jurisdictions. Max date: {max_date.date()}")
+matched_states = len(state_avg)
+print(f"Done. {len(sm_map)} counties matched | {len(set(list(period_stats.keys())+list(precomp.keys())))} unique jurisdictions | {matched_states} states with avg data. Max date: {max_date.date()}")

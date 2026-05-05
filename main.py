@@ -419,12 +419,13 @@ async def upload_desc_doc(password: str, file: UploadFile = File(...)):
         lookup[key] = fips
         lookup[norm(c.get('name') or '')] = fips
 
-    # Clear all previously doc-imported descriptions
+    # Clear ALL existing descriptions on fresh doc import
+    # (new doc is authoritative — wipes manual entries too)
     cleared = 0
     for fips, c in counties.items():
-        if c.get('_desc_doc'):
+        if c.get('description') or c.get('_desc_doc'):
             c['description'] = ''
-            del c['_desc_doc']
+            c.pop('_desc_doc', None)
             cleared += 1
 
     # Apply new descriptions
