@@ -323,7 +323,7 @@ function onCountyClick(event, d){
         <div><div class="p-lbl">Min TAT</div><div class="p-val">${c._overrides?.min || daysToReadable(s.min)}</div></div>
         ${c.state_avg ? `<div><div class="p-lbl">${c.state} Statewide Avg</div><div class="p-val">${daysToReadable(c.state_avg.avg)}</div></div>` : ''}
       </div>
-      ${rankPct !== null ? `<div class="p-rank">Faster than <strong>${rankPct}%</strong> of all US counties (#${s.rank} of 3,231)</div>` : ''}
+      ${rankPct !== null ? `<div class="p-rank">Faster than <strong>${rankPct}%</strong> of all US counties (#${s.rank} of ${s.total.toLocaleString()})</div>` : ''}
       ${c.precomp?.gt2weeks ? `<div style="font-size:10px;color:#de7612;margin-top:4px">⚠ ${c.precomp.gt2weeks} search${c.precomp.gt2weeks!==1?'es':''} exceeded 2 weeks</div>` : ''}
       ${c.precomp?.lt10min ? `<div style="font-size:10px;color:#55ae5c;margin-top:2px">⚡ ${c.precomp.lt10min} search${c.precomp.lt10min!==1?'es':''} completed in under 10 min</div>` : ''}
       `;
