@@ -667,7 +667,7 @@ _START_TIME = str(int(_time.time()))  # changes every container restart / deploy
 
 @app.get("/api/version")
 def version():
-    return {"version": _START_TIME}
+    return {"version": _START_TIME, "has_analytics": True}
 
 @app.post("/api/log/click")
 async def log_click(request: Request, payload: dict):
