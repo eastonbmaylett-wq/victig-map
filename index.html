@@ -25,14 +25,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .search-item:hover{background:#f0f4ff}
 .s-badge{font-size:10px;color:#888;margin-left:4px}
 
-/* Toolbar */
-#toolbar{background:#f7f8fa;border-bottom:1px solid #e0e4ea;padding:6px 16px;display:flex;align-items:center;gap:8px;flex-shrink:0;flex-wrap:wrap}
-.tb-label{font-size:11px;color:#888;font-weight:500;white-space:nowrap}
-.btn-group{display:flex;gap:3px}
-.tb-btn{padding:4px 10px;border-radius:5px;border:1.5px solid #ddd;background:white;font-size:11px;cursor:pointer;color:#555;font-weight:500;white-space:nowrap;transition:all .12s}
-.tb-btn:hover{border-color:#aaa}
-.tb-btn.active{background:#1a2b45;color:white;border-color:#1a2b45}
-.tb-sep{width:1px;background:#ddd;align-self:stretch;margin:0 4px}
 
 /* Map */
 #map-wrap{flex:1;position:relative;overflow:hidden;background:white}
@@ -133,31 +125,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   </div>
 </div>
 
-<div id="toolbar">
-  <span class="tb-label">Period:</span>
-  <div class="btn-group">
-    <button class="tb-btn active" data-period="90d">3 Months</button>
-    <button class="tb-btn" data-period="60d">60 Days</button>
-    <button class="tb-btn" data-period="30d">30 Days</button>
-  </div>
-  <div class="tb-sep"></div>
-  <span class="tb-label">Search Type:</span>
-  <div class="btn-group">
-    <button class="tb-btn active" data-type="all">All Searches</button>
-    <button class="tb-btn" data-type="county_criminal">County Criminal <span style="font-weight:400;opacity:.7">(courthouse)</span></button>
 
-  </div>
-  <div class="tb-sep"></div>
-  <span class="tb-label">Filter:</span>
-  <div class="btn-group">
-    <button class="tb-btn active" data-filter="all">All</button>
-    <button class="tb-btn" data-filter="ok">No Delay</button>
-    <button class="tb-btn" data-filter="delay">Delay</button>
-    <button class="tb-btn" data-filter="high_tat">TAT&gt;14d</button>
-    <button class="tb-btn" data-filter="significant">Significant</button>
-          <button class="tb-btn" data-filter="closed">Closed</button>
-  </div>
-</div>
 
 <div id="update-banner" style="display:none;position:fixed;top:0;left:0;right:0;background:#1a2b45;color:white;padding:8px 16px;font-size:13px;z-index:9999;align-items:center;justify-content:center;gap:12px">
   🔄 A new version of the map is available.
@@ -190,15 +158,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   </div>
 
   <div id="legend">
-    <div id="legend-buckets" style="display:none">
-      <h4>TAT Status</h4>
-      <div class="leg-row"><div class="leg-sw" style="background:#55ae5c"></div>No Delay <span style="color:#bbb;font-size:10px">(on track)</span></div>
-      <div class="leg-row"><div class="leg-sw" style="background:#dea922"></div>Delay <span style="color:#bbb;font-size:10px">(expect slow turnaround)</span></div>
-      <div class="leg-row"><div class="leg-sw" style="background:#de7612"></div>Avg TAT &gt;14 Days <span style="color:#bbb;font-size:10px">(2+ weeks)</span></div>
-      <div class="leg-row"><div class="leg-sw" style="background:#cf4027"></div>Significant Delay <span style="color:#bbb;font-size:10px">(severely impacted)</span></div>
-      <div class="leg-row"><div class="leg-sw" style="background:#7b2d8b"></div>Closed / No Access <span style="color:#bbb;font-size:10px">(courthouse closed)</span></div>
-      <div class="leg-row"><div class="leg-sw" style="background:#55ae5c"></div>No Data <span style="color:#bbb;font-size:10px">(no recent searches)</span></div>
-    </div>
     <div id="legend-gradient">
       <h4>Avg TAT (days)</h4>
       <div id="gradient-bar"></div>
@@ -255,10 +214,10 @@ let counties = {};
 let localOverrides = JSON.parse(localStorage.getItem('victig_overrides')||'{}');
 let editingFips = null;
 let countyPaths = {};
-let activePeriod = '90d';
-let activeType   = 'all';
-let activeColor  = 'gradient';
-let activeFilter = 'all';
+const activePeriod = '90d';
+const activeType   = 'all';
+const activeColor  = 'gradient';
+const activeFilter = 'all';
 let svgZoom, svgSel, gSel;
 let topoData;
 let stateFeatures = [];
@@ -393,7 +352,7 @@ async function init(){
   updateBadge();
   buildPanels();
   buildSearchIndex();
-  initToolbar();
+
 }
 
 // ── Map ───────────────────────────────────────────────────────────────────
@@ -618,43 +577,7 @@ function onCountyClick(event, d){
 function closePopup(){ document.getElementById('popup').style.display='none'; }
 document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ closePopup(); closeAdmin(); }});
 
-// ── Toolbar ───────────────────────────────────────────────────────────────
-function initToolbar(){
-  document.querySelectorAll('[data-period]').forEach(btn=>{
-    btn.addEventListener('click',()=>{
-      document.querySelectorAll('[data-period]').forEach(b=>b.classList.remove('active'));
-      btn.classList.add('active');
-      activePeriod = btn.dataset.period;
-      refreshColors(); buildPanels();
-    });
-  });
-  document.querySelectorAll('[data-type]').forEach(btn=>{
-    btn.addEventListener('click',()=>{
-      document.querySelectorAll('[data-type]').forEach(b=>b.classList.remove('active'));
-      btn.classList.add('active');
-      activeType = btn.dataset.type;
-      refreshColors(); buildPanels();
-    });
-  });
-  document.querySelectorAll('[data-color]').forEach(btn=>{
-    btn.addEventListener('click',()=>{
-      document.querySelectorAll('[data-color]').forEach(b=>b.classList.remove('active'));
-      btn.classList.add('active');
-      activeColor = btn.dataset.color;
-      document.getElementById('legend-buckets').style.display  = activeColor==='bucket'   ? '' : 'none';
-      document.getElementById('legend-gradient').style.display = activeColor==='gradient' ? '' : 'none';
-      refreshColors();
-    });
-  });
-  document.querySelectorAll('[data-filter]').forEach(btn=>{
-    btn.addEventListener('click',()=>{
-      document.querySelectorAll('[data-filter]').forEach(b=>b.classList.remove('active'));
-      btn.classList.add('active');
-      activeFilter = btn.dataset.filter;
-      refreshColors(); closePopup();
-    });
-  });
-}
+// Toolbar removed — defaults: 90d, all searches, gradient color, no filter
 
 function refreshColors(){
   d3.selectAll('.county')
