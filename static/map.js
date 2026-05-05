@@ -20,8 +20,6 @@ let editingFips = null;
 let countyPaths = {};
 const activePeriod = '90d';
 const activeType   = 'all';
-const activeColor  = 'gradient';
-const activeFilter = 'all';
 let svgZoom, svgSel, gSel;
 let topoData;
 let stateFeatures = [];
@@ -79,14 +77,10 @@ function getStatus(fips){
 function getFill(fips){
   const avg = getAvg(fips);
   if(avg === null) return STATUS.no_data.fill;
-  if(activeColor === 'gradient') return gradScale(avg);
-  return STATUS[getStatus(fips)]?.fill || STATUS.no_data.fill;
+  return gradScale(avg);
 }
 
-function dimmed(fips){
-  if(activeFilter === 'all') return false;
-  return getStatus(fips) !== activeFilter;
-}
+function dimmed(fips){ return false; }
 
 // ── Init ─────────────────────────────────────────────────────────────────
 function setStatus(msg){ document.getElementById('data-date').textContent = msg; }
@@ -425,11 +419,9 @@ function updateBadge(){
 const MEDALS = ['🥇','🥈','🥉'];
 function buildPanels(){
   // Update panel subtitles to reflect active filter
-  const periodLabel = {'30d':'30 Days','60d':'60 Days','90d':'3 Months','180d':'6 Months'}[activePeriod] || activePeriod;
-  const typeLabel   = activeType === 'all' ? '' : ` · ${activeType.replace('_',' ')}`;
   document.querySelectorAll('.panel-header h4').forEach((el, i) => {
     const icons = ['🥇 Fastest','🐢 Slowest'];
-    el.innerHTML = `${icons[i]} <span style="font-weight:400;color:#aaa;font-size:10px">${periodLabel}${typeLabel}</span>`;
+    el.textContent = icons[i];
   });
 
   const eligible = Object.entries(counties)

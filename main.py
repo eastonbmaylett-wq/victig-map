@@ -22,6 +22,12 @@ CONFIG_FILE = DATA_DIR / "site-config.json"
 from fastapi.staticfiles import StaticFiles
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 
+# Cache-bust version: hash of all static files combined
+import hashlib as _hashlib
+_static_hash = _hashlib.md5(
+    b''.join(f.read_bytes() for f in sorted((BASE / 'static').glob('*')) if f.is_file())
+).hexdigest()[:8]
+
 # Seed data files from repo if not yet on volume
 for _f in ["county-data.json", "site-config.json"]:
     _src = BASE / _f
@@ -75,10 +81,16 @@ async def block_raw_files(request: Request, call_next):
     return response
 
 # ── Public routes ─────────────────────────────────────────────────────────
+def _inject_version(html_path: Path) -> Response:
+    """Serve HTML with ?v=hash appended to all /static/ asset URLs."""
+    import re as _re
+    html = _re.sub(r'(/static/[^"]+)', lambda m: m.group(1) + f'?v={_static_hash}', html_path.read_text())
+    return Response(content=html, media_type="text/html",
+                    headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
+
 @app.get("/")
 def root():
-    return FileResponse(BASE / "index.html", media_type="text/html",
-                        headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
+    return _inject_version(BASE / "index.html")
 
 @app.get("/county-data.json")
 def get_data():
@@ -133,14 +145,12 @@ async def update_site_config(payload: dict):
 
 @app.get("/admin")
 def admin_page():
-    return FileResponse(BASE / "admin.html", media_type="text/html",
-                        headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
+    return _inject_version(BASE / "admin.html")
 
 @app.get("/embed")
 def embed_page():
-    """Iframe-optimised view - no header, full-bleed map."""
-    return FileResponse(BASE / "embed.html", media_type="text/html",
-                        headers={"Cache-Control": "no-store, no-cache"})
+    return _inject_version(BASE / "embed.html")
+
 
 @app.get("/victig-logo-white.png")
 def logo_white():
