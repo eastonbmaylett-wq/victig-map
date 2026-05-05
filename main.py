@@ -679,7 +679,11 @@ def version():
     return {"version": _START_TIME, "has_analytics": True}
 
 @app.post("/api/log/click")
-async def log_click(request: Request, payload: dict):
+async def log_click(request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
     _log_event(request, 'click',
                county_id=payload.get('fips'),
                county=payload.get('county'),
