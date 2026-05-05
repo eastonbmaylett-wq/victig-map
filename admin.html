@@ -108,9 +108,29 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 #close-edit{padding:7px 14px;background:#f0f0f0;color:#555;border:none;border-radius:6px;cursor:pointer;font-size:12px}
 #save-status{font-size:12px}
 .save-ok{color:#155724} .save-err{color:#cf4027}
+
+/* Full-page drag overlay */
+#page-drag-overlay{
+  display:none;position:fixed;inset:0;z-index:9999;
+  background:rgba(26,43,69,.82);backdrop-filter:blur(4px);
+  align-items:center;justify-content:center;flex-direction:column;
+  pointer-events:none;
+}
+#page-drag-overlay.active{display:flex;pointer-events:all}
+#page-drag-overlay .overlay-icon{font-size:64px;margin-bottom:16px;animation:bounce .6s infinite alternate}
+#page-drag-overlay .overlay-title{font-size:24px;font-weight:700;color:white;margin-bottom:6px}
+#page-drag-overlay .overlay-sub{font-size:14px;color:rgba(255,255,255,.65)}
+@keyframes bounce{from{transform:translateY(0)}to{transform:translateY(-10px)}}
 </style>
 </head>
 <body>
+
+<!-- Full-page drag overlay -->
+<div id="page-drag-overlay">
+  <div class="overlay-icon" id="overlay-icon">📂</div>
+  <div class="overlay-title" id="overlay-title">Drop to import</div>
+  <div class="overlay-sub" id="overlay-sub">Release to upload your file</div>
+</div>
 
 <!-- Login -->
 <div id="login-screen">
@@ -863,6 +883,70 @@ function copyEl(id){
     if(c){ c.textContent = '✓ Copied!'; setTimeout(()=>c.textContent='',2000); }
   });
 }
+
+// ── Page-wide drag & drop ────────────────────────────────────────────────
+let dragCounter = 0;
+
+function getFileType(file){
+  if(!file) return 'data';
+  const n = file.name.toLowerCase();
+  if(n.endsWith('.docx')) return 'doc';
+  return 'data';
+}
+
+function updateOverlayForFile(file){
+  const type = file ? getFileType(file) : 'data';
+  const icon = document.getElementById('overlay-icon');
+  const title = document.getElementById('overlay-title');
+  const sub   = document.getElementById('overlay-sub');
+  if(type === 'doc'){
+    icon.textContent  = '\ud83d\udcc4';
+    title.textContent = 'Drop Court Delays Doc';
+    sub.textContent   = '.docx → update county descriptions';
+  } else {
+    icon.textContent  = '\ud83d\udcc2';
+    title.textContent = 'Drop to Import Data';
+    sub.textContent   = 'CSV / Excel / TSV → update map TAT data';
+  }
+}
+
+document.addEventListener('dragenter', e => {
+  // Only activate when admin UI is visible
+  if(document.getElementById('admin-ui').style.display === 'none') return;
+  dragCounter++;
+  const file = e.dataTransfer?.items?.[0];
+  updateOverlayForFile(file ? {name: file.type || ''} : null);
+  document.getElementById('page-drag-overlay').classList.add('active');
+});
+
+document.addEventListener('dragleave', e => {
+  dragCounter--;
+  if(dragCounter <= 0){
+    dragCounter = 0;
+    document.getElementById('page-drag-overlay').classList.remove('active');
+  }
+});
+
+document.addEventListener('dragover', e => { e.preventDefault(); });
+
+document.addEventListener('drop', e => {
+  e.preventDefault();
+  dragCounter = 0;
+  document.getElementById('page-drag-overlay').classList.remove('active');
+  // Only handle when admin UI is visible
+  if(document.getElementById('admin-ui').style.display === 'none') return;
+  const file = e.dataTransfer?.files?.[0];
+  if(!file) return;
+  const type = getFileType(file);
+  if(type === 'doc'){
+    handleDocFile(file);
+    // Scroll drop zone into view
+    document.getElementById('doc-drop-zone').scrollIntoView({behavior:'smooth',block:'nearest'});
+  } else {
+    handleFile(file);
+    document.getElementById('drop-zone').scrollIntoView({behavior:'smooth',block:'nearest'});
+  }
+});
 
 // ── Auto-login ────────────────────────────────────────────────────────────
 if(token){
