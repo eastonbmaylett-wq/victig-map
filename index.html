@@ -329,6 +329,13 @@ async function init(){
       stateAvgMap[st] = { avg: b.sum / b.n, count: b.n };
     }
   }
+  // Always compute state rank (whether from server or client-side)
+  const stateRanked = Object.entries(stateAvgMap).sort((a,b) => a[1].avg - b[1].avg);
+  const stateTotal  = stateRanked.length;
+  stateRanked.forEach(([st], i) => {
+    stateAvgMap[st].rank  = i + 1;
+    stateAvgMap[st].total = stateTotal;
+  });
   // Attach to every county object so popup can reference it
   for (const c of Object.values(counties)) {
     if (c.state && stateAvgMap[c.state]) {
