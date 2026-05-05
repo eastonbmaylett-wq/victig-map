@@ -136,7 +136,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 <div id="toolbar">
   <span class="tb-label">Period:</span>
   <div class="btn-group">
-    <button class="tb-btn" data-period="180d">6 Months</button>
     <button class="tb-btn active" data-period="90d">3 Months</button>
     <button class="tb-btn" data-period="60d">60 Days</button>
     <button class="tb-btn" data-period="30d">30 Days</button>
@@ -147,12 +146,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <button class="tb-btn active" data-type="all">All Searches</button>
     <button class="tb-btn" data-type="county_criminal">County Criminal <span style="font-weight:400;opacity:.7">(courthouse)</span></button>
 
-  </div>
-  <div class="tb-sep"></div>
-  <span class="tb-label">Color:</span>
-  <div class="btn-group">
-    <button class="tb-btn" data-color="bucket">Status</button>
-    <button class="tb-btn active" data-color="gradient">Gradient</button>
   </div>
   <div class="tb-sep"></div>
   <span class="tb-label">Filter:</span>
@@ -564,22 +557,15 @@ function onCountyClick(event, d){
         <div><div class="p-lbl">Avg TAT</div><div class="p-val">${c._overrides?.avg || daysToReadable(s.avg)}</div></div>
         <div><div class="p-lbl">Max TAT</div><div class="p-val">${c._overrides?.max || daysToReadable(s.max)}</div></div>
         <div><div class="p-lbl">Min TAT</div><div class="p-val">${c._overrides?.min || daysToReadable(s.min)}</div></div>
-        ${c.state_avg ? `<div><div class="p-lbl">${c.state} Avg</div><div class="p-val" style="color:#888">${daysToReadable(c.state_avg.avg)}</div></div>` : ''}
+
       </div>
       ${rankPct !== null ? `<div class="p-rank">Faster than <strong>${rankPct}%</strong> of all US counties (#${s.rank} of 3,231)</div>` : ''}
       ${c.precomp?.gt2weeks ? `<div style="font-size:10px;color:#de7612;margin-top:4px">⚠ ${c.precomp.gt2weeks} search${c.precomp.gt2weeks!==1?'es':''} exceeded 2 weeks</div>` : ''}
       ${c.precomp?.lt10min ? `<div style="font-size:10px;color:#55ae5c;margin-top:2px">⚡ ${c.precomp.lt10min} search${c.precomp.lt10min!==1?'es':''} completed in under 10 min</div>` : ''}
-      ${c.state_avg ? `<div style="font-size:10px;color:#888;margin-top:4px;border-top:1px solid #f0f0f0;padding-top:4px">🏙 ${c.state} statewide avg: <strong>${daysToReadable(c.state_avg.avg)}</strong> (${c.state_avg.count.toLocaleString()} searches)</div>` : ''}`;
+      `;
   }
 
-  // For counties with no individual data, show state avg as reference
   let stateAvgHtml = '';
-  if (!s && c.state_avg && c.state_avg.avg) {
-    stateAvgHtml = `<div class="p-latest" style="margin-bottom:8px">
-      <div class="p-latest-title" style="color:#888">🏙 ${c.state} Statewide Average</div>
-      <div class="p-latest-row"><span class="p-latest-lbl">Avg TAT</span><span><b>${daysToReadable(c.state_avg.avg)}</b></span></div>
-    </div>`;
-  }
 
   const descHtml = c.description
     ? `<div class="p-desc">${c.description}</div>`
