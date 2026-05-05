@@ -129,6 +129,14 @@ def embed_page():
     return FileResponse(BASE / "embed.html", media_type="text/html",
                         headers={"Cache-Control": "no-store, no-cache"})
 
+@app.get("/victig-logo-white.png")
+def logo_white():
+    return FileResponse(BASE / "victig-logo-white.png", media_type="image/png")
+
+@app.get("/victig-logo.png")
+def logo_orig():
+    return FileResponse(BASE / "victig-logo.png", media_type="image/png")
+
 @app.post("/admin/update-county")
 async def update_county(payload: dict):
     check_auth(payload.get("password", ""))

@@ -564,6 +564,7 @@ function onCountyClick(event, d){
         <div><div class="p-lbl">Avg TAT</div><div class="p-val">${c._overrides?.avg || daysToReadable(s.avg)}</div></div>
         <div><div class="p-lbl">Max TAT</div><div class="p-val">${c._overrides?.max || daysToReadable(s.max)}</div></div>
         <div><div class="p-lbl">Min TAT</div><div class="p-val">${c._overrides?.min || daysToReadable(s.min)}</div></div>
+        ${c.state_avg ? `<div><div class="p-lbl">${c.state} Avg</div><div class="p-val" style="color:#888">${daysToReadable(c.state_avg.avg)}</div></div>` : ''}
       </div>
       ${rankPct !== null ? `<div class="p-rank">Faster than <strong>${rankPct}%</strong> of all US counties (#${s.rank} of 3,231)</div>` : ''}
       ${c.precomp?.gt2weeks ? `<div style="font-size:10px;color:#de7612;margin-top:4px">⚠ ${c.precomp.gt2weeks} search${c.precomp.gt2weeks!==1?'es':''} exceeded 2 weeks</div>` : ''}
@@ -575,9 +576,8 @@ function onCountyClick(event, d){
   let stateAvgHtml = '';
   if (!s && c.state_avg && c.state_avg.avg) {
     stateAvgHtml = `<div class="p-latest" style="margin-bottom:8px">
-      <div class="p-latest-title" style="color:#888">🏙 ${c.state} Statewide Average <span style="font-weight:400;font-size:10px">(no county-level data)</span></div>
+      <div class="p-latest-title" style="color:#888">🏙 ${c.state} Statewide Average</div>
       <div class="p-latest-row"><span class="p-latest-lbl">Avg TAT</span><span><b>${daysToReadable(c.state_avg.avg)}</b></span></div>
-      <div class="p-latest-row"><span class="p-latest-lbl">Based on</span><span>${c.state_avg.count.toLocaleString()} searches statewide</span></div>
     </div>`;
   }
 
