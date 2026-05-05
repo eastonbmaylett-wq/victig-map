@@ -358,27 +358,32 @@ async function init(){
 
   // Enrich counties with state avg — prefer top-level stateAvg (written by process.py),
   // fall back to computing it client-side from existing per-county period data.
-  const stateAvgMap = data.stateAvg || {};
-  if (!Object.keys(stateAvgMap).length) {
-    // Compute from existing county periods data (for county-data.json pre-dating this feature)
-    const stateBuckets = {};
+  // Build stateAvg: prefer server-computed, else derive client-side from county period data
+  const stateAvgMap = {};
+  if (data.stateAvg && Object.keys(data.stateAvg).length) {
+    Object.assign(stateAvgMap, data.stateAvg);
+  } else {
+    const buckets = {};
     for (const c of Object.values(counties)) {
-      const st = c.state; if (!st) continue;
-      const p = c.periods?.['90d'] || c.periods?.['180d'] || c.periods?.['60d'] || c.periods?.['30d'];
-      if (!p) continue;
-      if (!stateBuckets[st]) stateBuckets[st] = { sum: 0, count: 0 };
-      stateBuckets[st].sum   += p.avg * p.count;
-      stateBuckets[st].count += p.count;
+      const st = c.state;
+      if (!st || !c.periods) continue;
+      const p = c.periods['90d'] || c.periods['180d'] || c.periods['60d'] || c.periods['30d'];
+      if (!p || !p.avg || !p.count) continue;
+      if (!buckets[st]) buckets[st] = { sum: 0, n: 0 };
+      buckets[st].sum += p.avg * p.count;
+      buckets[st].n   += p.count;
     }
-    for (const [st, b] of Object.entries(stateBuckets)) {
-      stateAvgMap[st] = { avg: b.sum / b.count, count: b.count };
+    for (const [st, b] of Object.entries(buckets)) {
+      stateAvgMap[st] = { avg: b.sum / b.n, count: b.n };
     }
   }
-  for (const [fips, c] of Object.entries(counties)) {
-    if (!c.state_avg && c.state && stateAvgMap[c.state]) {
+  // Attach to every county object so popup can reference it
+  for (const c of Object.values(counties)) {
+    if (c.state && stateAvgMap[c.state]) {
       c.state_avg = stateAvgMap[c.state];
     }
   }
+  console.log('[stateAvg] computed for', Object.keys(stateAvgMap).length, 'states, sample:', Object.entries(stateAvgMap)[0]);
 
   // Apply local overrides
   for(const [fips,ov] of Object.entries(localOverrides)){
@@ -567,14 +572,14 @@ function onCountyClick(event, d){
   }
 
   // For counties with no individual data, show state avg as reference
-  const stateAvgHtml = (!s && c.state_avg)
-    ? `<div class="p-latest" style="margin-bottom:8px">
-        <div class="p-latest-title" style="color:#888">🏙 ${c.state} Statewide Average <span style="font-weight:400;font-size:10px">(no county-level data)</span></div>
-        <div class="p-latest-row"><span class="p-latest-lbl">Avg TAT</span><span><b>${daysToReadable(c.state_avg.avg)}</b></span></div>
-        <div class="p-latest-row"><span class="p-latest-lbl">Searches</span><span>${c.state_avg.count.toLocaleString()}</span></div>
-        ${c.state_avg.periods?.['30d'] ? `<div class="p-latest-row"><span class="p-latest-lbl">Last 30d avg</span><span>${daysToReadable(c.state_avg.periods['30d'].avg)}</span></div>` : ''}
-      </div>`
-    : '';
+  let stateAvgHtml = '';
+  if (!s && c.state_avg && c.state_avg.avg) {
+    stateAvgHtml = `<div class="p-latest" style="margin-bottom:8px">
+      <div class="p-latest-title" style="color:#888">🏙 ${c.state} Statewide Average <span style="font-weight:400;font-size:10px">(no county-level data)</span></div>
+      <div class="p-latest-row"><span class="p-latest-lbl">Avg TAT</span><span><b>${daysToReadable(c.state_avg.avg)}</b></span></div>
+      <div class="p-latest-row"><span class="p-latest-lbl">Based on</span><span>${c.state_avg.count.toLocaleString()} searches statewide</span></div>
+    </div>`;
+  }
 
   const descHtml = c.description
     ? `<div class="p-desc">${c.description}</div>`
