@@ -115,10 +115,18 @@ COL_LT007    = col('<0.007 tat')
 
 is_new_format = COL_EXACT is not None
 
-if COL_JUR is None or COL_TAT is None:
-    print(f"ERROR: Required columns not found. Header: {header}"); sys.exit(1)
+# Allow raw format: no TAT column but start + completion present → compute on the fly
+COMPUTE_TAT = COL_TAT is None and COL_START is not None and COL_COMPLETE is not None
 
-print(f"Format: {'NEW (Exact TAT)' if is_new_format else 'OLD (Search TAT)'}")
+if COL_JUR is None:
+    print(f"ERROR: No 'Jurisdiction' column found. Header: {header}"); sys.exit(1)
+if COL_TAT is None and not COMPUTE_TAT:
+    print(f"ERROR: No TAT column found and no Start+Completion columns to compute from. Header: {header}"); sys.exit(1)
+
+if COMPUTE_TAT:
+    print("Format: RAW (TAT computed from Start/Completion dates)")
+else:
+    print(f"Format: {'NEW (Exact TAT)' if is_new_format else 'OLD (Search TAT)'}")
 print(f"Columns: {len(header)} | Rows: {len(raw_rows)-1}")
 
 # ── Parse rows ────────────────────────────────────────────────────────────
@@ -130,9 +138,19 @@ for raw in raw_rows[1:]:
     def get(c): return raw[c].strip() if c is not None and c < len(raw) else ''
 
     jur      = get(COL_JUR)
-    tat_str  = get(COL_TAT)
     date_str = get(COL_START)
     search   = get(COL_SNAME)
+
+    # Compute TAT from start/completion if no TAT column
+    if COMPUTE_TAT:
+        comp_dt  = parse_dt(get(COL_COMPLETE))
+        start_dt = parse_dt(date_str)
+        if start_dt and comp_dt and comp_dt > start_dt:
+            tat_str = str((comp_dt - start_dt).total_seconds() / 86400)
+        else:
+            tat_str = ''
+    else:
+        tat_str = get(COL_TAT)
 
     # Collect pre-computed stats (new format only)
     if COL_UJUR is not None:
