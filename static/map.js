@@ -339,11 +339,11 @@ function onCountyClick(event, d){
       : statePct <= 33  ? ['Above Average','#721c24']
       : statePct <= 66  ? ['Average','#856404']
       :                   ['Below Average','#155724'];
-    stateAvgHtml = `<div class="p-latest" style="margin-bottom:8px">
-      <div class="p-latest-title" style="color:#888">${c.state} Statewide Average</div>
-      ${stLabel ? `<div style="font-size:11px;margin-bottom:6px;color:#555">Search Time: <strong style="color:${stColor}">${stLabel}</strong></div>` : ''}
-      <div class="p-latest-row"><span class="p-latest-lbl">Statewide Average TAT</span><span><b>${daysToReadable(sa.avg)}</b></span></div>
-      ${statePct !== null ? `<div class="p-rank">Faster than <strong>${statePct}%</strong> of all US states (#${stateRank} of ${stateTotal})</div>` : ''}
+    stateAvgHtml = `<div style="text-align:center;padding:14px 8px 10px;background:#f7f8fa;border-radius:8px;margin-bottom:10px">
+      <div style="font-size:11px;color:#999;text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">${c.state} Statewide Average TAT</div>
+      <div style="font-size:32px;font-weight:700;color:#1a2b45;line-height:1">${daysToReadable(sa.avg)}</div>
+      ${stLabel ? `<div style="margin-top:6px;font-size:12px;color:#555">Search Time: <strong style="color:${stColor}">${stLabel}</strong></div>` : ''}
+      ${statePct !== null ? `<div style="font-size:11px;color:#888;margin-top:4px">Faster than <strong>${statePct}%</strong> of US states (#${stateRank} of ${stateTotal})</div>` : ''}
     </div>`;
   }
 
