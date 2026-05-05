@@ -525,6 +525,13 @@ function onCountyClick(event, d){
   }
 
   let stateAvgHtml = '';
+  if (!s && c.state_avg && c.state_avg.avg) {
+    stateAvgHtml = `<div class="p-latest" style="margin-bottom:8px">
+      <div class="p-latest-title" style="color:#888">${c.state} Statewide Average</div>
+      <div class="p-latest-row"><span class="p-latest-lbl">Avg TAT</span><span><b>${daysToReadable(c.state_avg.avg)}</b></span></div>
+      <div class="p-latest-row"><span class="p-latest-lbl">Searches</span><span>${c.state_avg.count.toLocaleString()}</span></div>
+    </div>`;
+  }
 
   const descHtml = c.description
     ? `<div class="p-desc">${c.description}</div>`
