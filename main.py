@@ -764,7 +764,6 @@ async def get_analytics_summary(password: str):
         FROM events WHERE event='visit'
         GROUP BY day ORDER BY day DESC LIMIT 30
     """).fetchall()
-    con.close()
     top_states = con.execute("""
         SELECT state, COUNT(*) as cnt FROM events
         WHERE event='visit' AND state IS NOT NULL AND state != ''
