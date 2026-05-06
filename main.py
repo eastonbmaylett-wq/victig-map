@@ -1,7 +1,8 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
-import subprocess, shutil, os, hashlib, json, csv, io, sqlite3, datetime
+import subprocess, shutil, os, hashlib, json, csv, io, sqlite3, datetime, asyncio
+import urllib.request as _urllib_req
 from pathlib import Path
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)  # disable API docs
@@ -53,6 +54,22 @@ def _analytics_conn():
     con.commit()
     return con
 
+def _geoip_sync(ip: str) -> str:
+    """Return 'City, State' for an IP using ip-api.com (called in a thread)."""
+    try:
+        # Skip private / loopback IPs
+        if ip.startswith(('10.','172.','192.168.','127.','::1','fd')):
+            return ''
+        url = f"http://ip-api.com/json/{ip}?fields=status,city,regionName"
+        with _urllib_req.urlopen(url, timeout=3) as r:
+            d = json.loads(r.read())
+            if d.get('status') == 'success':
+                parts = [d.get('city',''), d.get('regionName','')]
+                return ', '.join(p for p in parts if p)
+    except Exception:
+        pass
+    return ''
+
 def _log_event(request: Request, event: str, county_id=None, county=None, state=None):
     try:
         ip = request.headers.get('x-forwarded-for', request.client.host).split(',')[0].strip()
@@ -62,7 +79,21 @@ def _log_event(request: Request, event: str, county_id=None, county=None, state=
         con.execute("INSERT INTO events (ts,ip,ua,event,county_id,county,state) VALUES (?,?,?,?,?,?,?)",
                     (ts, ip, ua, event, county_id, county, state))
         con.commit()
+        row_id = con.execute('SELECT last_insert_rowid()').fetchone()[0]
         con.close()
+        # Fire-and-forget geo lookup for visit/embed events with no state set
+        if event in ('visit', 'embed') and not state:
+            async def _enrich():
+                try:
+                    loop = asyncio.get_event_loop()
+                    loc = await loop.run_in_executor(None, _geoip_sync, ip)
+                    if loc:
+                        c = _analytics_conn()
+                        c.execute('UPDATE events SET state=? WHERE id=?', (loc, row_id))
+                        c.commit(); c.close()
+                except Exception:
+                    pass
+            asyncio.ensure_future(_enrich())
     except Exception:
         pass  # never break the map over analytics
 
@@ -734,14 +765,42 @@ async def get_analytics_summary(password: str):
         GROUP BY day ORDER BY day DESC LIMIT 30
     """).fetchall()
     con.close()
+    top_states = con.execute("""
+        SELECT state, COUNT(*) as cnt FROM events
+        WHERE event='visit' AND state IS NOT NULL AND state != ''
+        GROUP BY state ORDER BY cnt DESC LIMIT 10
+    """).fetchall()
+    con.close()
     return {
         "total_visits": total_visits,
         "unique_ips": unique_ips,
         "today_visits": today_visits,
         "top_counties": [{"county":r[0],"state":r[1],"clicks":r[2]} for r in top_counties],
+        "top_states": [{"state":r[0],"visits":r[1]} for r in top_states],
         "recent": [{"ts":r[0],"ip":r[1],"ua":r[2],"event":r[3],"county":r[4],"state":r[5]} for r in recent],
         "by_day": [{"day":r[0],"visits":r[1]} for r in by_day],
     }
+
+@app.post("/api/analytics/backfill-geo")
+async def backfill_geo(password: str):
+    """Enrich existing visit rows that have no state with IP geolocation."""
+    check_auth(password)
+    con = _analytics_conn()
+    rows = con.execute(
+        "SELECT id, ip FROM events WHERE event IN ('visit','embed') AND (state IS NULL OR state='') AND ip IS NOT NULL"
+    ).fetchall()
+    con.close()
+    enriched = 0
+    loop = asyncio.get_event_loop()
+    for row_id, ip in rows:
+        loc = await loop.run_in_executor(None, _geoip_sync, ip)
+        if loc:
+            c = _analytics_conn()
+            c.execute('UPDATE events SET state=? WHERE id=?', (loc, row_id))
+            c.commit(); c.close()
+            enriched += 1
+        await asyncio.sleep(0.05)  # stay under ip-api.com rate limit (45/min)
+    return {"enriched": enriched, "total": len(rows)}
 
 @app.get("/api/my-ip")
 async def my_ip(request: Request):

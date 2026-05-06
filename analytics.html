@@ -96,6 +96,19 @@
     </div>
 
     <div class="section">
+      <div class="section-header">🏙️ Visitors by State
+        <button id="backfill-btn" onclick="backfillGeo()" style="margin-left:auto;font-size:11px;padding:3px 10px;background:#f0f2f5;border:1px solid #ddd;border-radius:5px;cursor:pointer;font-weight:500">Enrich existing rows</button>
+        <span id="backfill-status" style="margin-left:8px;font-size:11px;color:#888"></span>
+      </div>
+      <div class="section-body">
+        <table>
+          <thead><tr><th>#</th><th>Location</th><th>Visits</th></tr></thead>
+          <tbody id="states-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="section">
       <div class="section-header">🗺️ Most Clicked Counties</div>
       <div class="section-body">
         <table>
@@ -166,6 +179,12 @@ function render(d) {
       <div class="bar-count">${r.visits}</div>
     </div>`).join('') || '<div style="padding:16px;color:#aaa;font-size:13px">No data yet</div>';
 
+  // Top states
+  const stb = document.getElementById('states-tbody');
+  stb.innerHTML = d.top_states && d.top_states.length
+    ? d.top_states.map((r,i) => `<tr><td style="color:#888">${i+1}</td><td>${r.state||'—'}</td><td><b>${r.visits}</b></td></tr>`).join('')
+    : '<tr><td colspan="3" style="color:#aaa;padding:16px">No location data yet — visit the map or click "Enrich existing rows"</td></tr>';
+
   // Top counties
   const ctb = document.getElementById('county-tbody');
   ctb.innerHTML = d.top_counties.length
@@ -199,6 +218,28 @@ function renderRecent() {
   }).join('') || '<tr><td colspan="5" style="color:#aaa;padding:16px">No activity yet</td></tr>';
 }
 
+
+async function backfillGeo() {
+  const btn = document.getElementById('backfill-btn');
+  const status = document.getElementById('backfill-status');
+  btn.disabled = true;
+  btn.textContent = 'Running...';
+  status.textContent = 'This may take a minute for large datasets';
+  try {
+    const r = await fetch(`/api/analytics/backfill-geo?password=${encodeURIComponent(_pw)}`, {method:'POST'});
+    const d = await r.json();
+    status.textContent = `Done — enriched ${d.enriched} of ${d.total} rows`;
+    btn.textContent = 'Enrich existing rows';
+    btn.disabled = false;
+    // Reload data
+    const res = await fetch(`/api/analytics/summary?password=${encodeURIComponent(_pw)}`);
+    render(await res.json());
+  } catch(e) {
+    status.textContent = 'Error — try again';
+    btn.disabled = false;
+    btn.textContent = 'Enrich existing rows';
+  }
+}
 
 function parseUA(ua) {
   if (!ua) return '—';
