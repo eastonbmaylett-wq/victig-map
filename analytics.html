@@ -40,12 +40,8 @@
   .section-body { padding: 0; }
 
   /* Chart */
-  #chart-wrap { padding: 16px 20px 8px; }
-  .bar-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; font-size: 12px; }
-  .bar-label { width: 90px; text-align: right; color: #555; flex-shrink: 0; }
-  .bar-track { flex: 1; background: #f0f2f5; border-radius: 4px; height: 18px; overflow: hidden; }
-  .bar-fill  { height: 100%; background: #1a4a8a; border-radius: 4px; transition: width .4s; }
-  .bar-count { width: 36px; color: #888; flex-shrink: 0; }
+  #chart-wrap { padding: 16px 20px 12px; overflow-x: auto; }
+  #day-chart  { display: block; width: 100%; min-width: 400px; }
 
   /* Table */
   table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
@@ -104,8 +100,10 @@
     </div>
 
     <div class="section">
-      <div class="section-header">📅 Visits by Day <span style="font-size:11px;color:#aaa;font-weight:400;margin-left:auto">last 30 days</span></div>
-      <div class="section-body" id="chart-wrap"></div>
+      <div class="section-header">📅 Visits by Day <span style="font-size:11px;color:#aaa;font-weight:400;margin-left:6px">(excluding you)</span><span style="font-size:11px;color:#aaa;font-weight:400;margin-left:auto">last 30 days</span></div>
+      <div class="section-body">
+        <div id="chart-wrap"><svg id="day-chart"></svg></div>
+      </div>
     </div>
 
     <div class="section">
@@ -153,26 +151,31 @@
 let _pw = '';
 let _myIp = '';
 let _allRecent = [];
+let _myIpReadyCallbacks = [];
 
 fetch('/api/my-ip').then(r=>r.json()).then(d=>{
   _myIp = d.ip;
   const badge = document.getElementById('my-ip-badge');
   if (badge) badge.textContent = `(you: ${_myIp})`;
-  // Re-render now that we know who we are
   if (_allRecent.length) renderVisitors();
+  // Fire pending callbacks (e.g. reload summary with IP exclusion)
+  _myIpReadyCallbacks.forEach(cb => cb());
+  _myIpReadyCallbacks = [];
 });
 
 function doLogin() {
   const pw = document.getElementById('pw-input').value;
   if (!pw) return;
   _pw = pw;
+  // Use pw directly here — _myIp may not be set yet; re-render chart after IP resolves
   fetch(`/api/analytics/summary?password=${encodeURIComponent(pw)}`)
     .then(r => { if (!r.ok) throw new Error('bad'); return r.json(); })
     .then(data => {
       document.getElementById('login-screen').style.display = 'none';
       document.getElementById('app').style.display = 'block';
       render(data);
-      // Auto-enrich in background — no need to click the button
+      // Once IP is known, reload summary with exclusion
+      _myIpReadyCallbacks.push(() => refreshData());
       backfillGeo(true);
     })
     .catch(() => {
@@ -185,16 +188,9 @@ function render(d) {
   document.getElementById('s-unique').textContent = d.unique_ips.toLocaleString();
   document.getElementById('s-today').textContent  = d.today_visits.toLocaleString();
 
-  // Bar chart — visits by day
-  const chartWrap = document.getElementById('chart-wrap');
-  const days = [...d.by_day].reverse(); // oldest → newest
-  const maxV = Math.max(...days.map(r => r.visits), 1);
-  chartWrap.innerHTML = days.map(r => `
-    <div class="bar-row">
-      <div class="bar-label">${r.day.slice(5)}</div>
-      <div class="bar-track"><div class="bar-fill" style="width:${(r.visits/maxV*100).toFixed(1)}%"></div></div>
-      <div class="bar-count">${r.visits}</div>
-    </div>`).join('') || '<div style="padding:16px;color:#aaa;font-size:13px">No data yet</div>';
+  // Vertical SVG bar chart — visits by day (oldest → newest)
+  const days = [...d.by_day].reverse();
+  renderBarChart(days);
 
   // Top states
   const stb = document.getElementById('states-tbody');
@@ -279,14 +275,64 @@ function renderVisitors() {
   }).join('');
 }
 
+async function summaryUrl() {
+  let u = `/api/analytics/summary?password=${encodeURIComponent(_pw)}`;
+  if (_myIp) u += `&exclude_ip=${encodeURIComponent(_myIp)}`;
+  return u;
+}
+
 async function refreshData() {
   const btn = document.getElementById('refresh-btn');
   if (btn) { btn.textContent = '...'; btn.disabled = true; }
   try {
-    const res = await fetch(`/api/analytics/summary?password=${encodeURIComponent(_pw)}`);
+    const res = await fetch(summaryUrl());
     render(await res.json());
   } catch(e) {}
   if (btn) { btn.textContent = '↻ Refresh'; btn.disabled = false; }
+}
+
+function renderBarChart(days) {
+  const svg = document.getElementById('day-chart');
+  if (!svg) return;
+  if (!days || !days.length) {
+    svg.innerHTML = '<text x="16" y="40" font-size="13" fill="#aaa">No data yet</text>';
+    svg.setAttribute('height', '60');
+    return;
+  }
+  const PAD = { top: 16, right: 16, bottom: 48, left: 36 };
+  const BAR_W = 28, GAP = 6;
+  const totalW = days.length * (BAR_W + GAP) + PAD.left + PAD.right;
+  const H = 180;
+  const maxV = Math.max(...days.map(r => r.visits), 1);
+  const chartH = H - PAD.top - PAD.bottom;
+
+  svg.setAttribute('viewBox', `0 0 ${totalW} ${H}`);
+  svg.setAttribute('height', H);
+  svg.style.minWidth = `${totalW}px`;
+
+  let bars = '';
+  days.forEach((r, i) => {
+    const x = PAD.left + i * (BAR_W + GAP);
+    const barH = Math.max(2, Math.round(r.visits / maxV * chartH));
+    const y = PAD.top + chartH - barH;
+    const label = r.day.slice(5); // MM-DD
+    bars += `
+      <rect x="${x}" y="${y}" width="${BAR_W}" height="${barH}" rx="3" fill="#1a4a8a" opacity="0.85">
+        <title>${r.day}: ${r.visits} visit${r.visits !== 1 ? 's' : ''}</title>
+      </rect>
+      <text x="${x + BAR_W/2}" y="${y - 4}" text-anchor="middle" font-size="9.5" fill="#1a4a8a" font-weight="600">${r.visits > 0 ? r.visits : ''}</text>
+      <text x="${x + BAR_W/2}" y="${H - 6}" text-anchor="middle" font-size="9" fill="#888" transform="rotate(-45 ${x + BAR_W/2} ${H - 6})">${label}</text>
+    `;
+  });
+
+  // Y-axis line
+  bars += `<line x1="${PAD.left - 4}" y1="${PAD.top}" x2="${PAD.left - 4}" y2="${PAD.top + chartH}" stroke="#e0e0e0" stroke-width="1"/>`;
+  // Top tick label
+  bars += `<text x="${PAD.left - 8}" y="${PAD.top + 4}" text-anchor="end" font-size="9" fill="#aaa">${maxV}</text>`;
+  // Zero line
+  bars += `<line x1="${PAD.left - 4}" y1="${PAD.top + chartH}" x2="${totalW - PAD.right}" y2="${PAD.top + chartH}" stroke="#e0e0e0" stroke-width="1"/>`;
+
+  svg.innerHTML = bars;
 }
 
 async function backfillGeo(silent = false) {
@@ -302,7 +348,7 @@ async function backfillGeo(silent = false) {
     }
     // Reload data if anything was enriched
     if (d.enriched > 0) {
-      const res = await fetch(`/api/analytics/summary?password=${encodeURIComponent(_pw)}`);
+      const res = await fetch(summaryUrl());
       render(await res.json());
     }
   } catch(e) {

@@ -744,31 +744,32 @@ async def get_analytics(password: str):
              "county_id":r[4],"county":r[5],"state":r[6]} for r in rows]
 
 @app.get("/api/analytics/summary")
-async def get_analytics_summary(password: str):
+async def get_analytics_summary(password: str, exclude_ip: str = None):
     check_auth(password)
     con = _analytics_conn()
-    total_visits   = con.execute("SELECT COUNT(*) FROM events WHERE event='visit'").fetchone()[0]
-    unique_ips     = con.execute("SELECT COUNT(DISTINCT ip) FROM events WHERE event='visit'").fetchone()[0]
-    today_visits   = con.execute("SELECT COUNT(*) FROM events WHERE event='visit' AND ts >= date('now')").fetchone()[0]
+    ex = exclude_ip or ''
+    total_visits   = con.execute("SELECT COUNT(*) FROM events WHERE event='visit' AND (? = '' OR ip != ?)", (ex, ex)).fetchone()[0]
+    unique_ips     = con.execute("SELECT COUNT(DISTINCT ip) FROM events WHERE event='visit' AND (? = '' OR ip != ?)", (ex, ex)).fetchone()[0]
+    today_visits   = con.execute("SELECT COUNT(*) FROM events WHERE event='visit' AND ts >= date('now') AND (? = '' OR ip != ?)", (ex, ex)).fetchone()[0]
     top_counties   = con.execute("""
         SELECT county, state, COUNT(*) as cnt FROM events
-        WHERE event='county_click' AND county IS NOT NULL
+        WHERE event='county_click' AND county IS NOT NULL AND (? = '' OR ip != ?)
         GROUP BY county, state ORDER BY cnt DESC LIMIT 10
-    """).fetchall()
+    """, (ex, ex)).fetchall()
     recent         = con.execute("""
         SELECT ts, ip, ua, event, county, state FROM events
         ORDER BY ts DESC LIMIT 50
     """).fetchall()
     by_day         = con.execute("""
         SELECT substr(ts,1,10) as day, COUNT(*) as cnt
-        FROM events WHERE event='visit'
+        FROM events WHERE event='visit' AND (? = '' OR ip != ?)
         GROUP BY day ORDER BY day DESC LIMIT 30
-    """).fetchall()
+    """, (ex, ex)).fetchall()
     top_states = con.execute("""
         SELECT state, COUNT(*) as cnt FROM events
-        WHERE event='visit' AND state IS NOT NULL AND state != ''
+        WHERE event='visit' AND state IS NOT NULL AND state != '' AND (? = '' OR ip != ?)
         GROUP BY state ORDER BY cnt DESC LIMIT 10
-    """).fetchall()
+    """, (ex, ex)).fetchall()
     con.close()
     return {
         "total_visits": total_visits,
