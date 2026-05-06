@@ -79,7 +79,8 @@
 <div id="app">
   <div class="topbar">
     <h1>📊 Victig Map — Analytics</h1>
-    <a href="/admin">← Admin</a>
+    <button onclick="refreshData()" id="refresh-btn" style="margin-left:auto;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.3);border-radius:6px;padding:5px 14px;font-size:12px;font-weight:600;cursor:pointer">&#x21bb; Refresh</button>
+    <a href="/admin" style="margin-left:12px">← Admin</a>
     <a href="/" style="margin-left:8px">← Map</a>
   </div>
   <div class="content">
@@ -171,6 +172,8 @@ function doLogin() {
       document.getElementById('login-screen').style.display = 'none';
       document.getElementById('app').style.display = 'block';
       render(data);
+      // Auto-enrich in background — no need to click the button
+      backfillGeo(true);
     })
     .catch(() => {
       document.getElementById('login-error').textContent = 'Incorrect password';
@@ -276,25 +279,34 @@ function renderVisitors() {
   }).join('');
 }
 
-async function backfillGeo() {
+async function refreshData() {
+  const btn = document.getElementById('refresh-btn');
+  if (btn) { btn.textContent = '...'; btn.disabled = true; }
+  try {
+    const res = await fetch(`/api/analytics/summary?password=${encodeURIComponent(_pw)}`);
+    render(await res.json());
+  } catch(e) {}
+  if (btn) { btn.textContent = '↻ Refresh'; btn.disabled = false; }
+}
+
+async function backfillGeo(silent = false) {
   const btn = document.getElementById('backfill-btn');
   const status = document.getElementById('backfill-status');
-  btn.disabled = true;
-  btn.textContent = 'Running...';
-  status.textContent = 'This may take a minute for large datasets';
+  if (!silent) { if(btn){btn.disabled=true;btn.textContent='Running...';} if(status) status.textContent='This may take a minute for large datasets'; }
   try {
     const r = await fetch(`/api/analytics/backfill-geo?password=${encodeURIComponent(_pw)}`, {method:'POST'});
     const d = await r.json();
-    status.textContent = `Done — enriched ${d.enriched} of ${d.total} rows`;
-    btn.textContent = 'Enrich existing rows';
-    btn.disabled = false;
-    // Reload data
-    const res = await fetch(`/api/analytics/summary?password=${encodeURIComponent(_pw)}`);
-    render(await res.json());
+    if (!silent) {
+      if(status) status.textContent = d.enriched > 0 ? `Done — enriched ${d.enriched} rows` : 'All rows already enriched';
+      if(btn){btn.textContent='Enrich existing rows';btn.disabled=false;}
+    }
+    // Reload data if anything was enriched
+    if (d.enriched > 0) {
+      const res = await fetch(`/api/analytics/summary?password=${encodeURIComponent(_pw)}`);
+      render(await res.json());
+    }
   } catch(e) {
-    status.textContent = 'Error — try again';
-    btn.disabled = false;
-    btn.textContent = 'Enrich existing rows';
+    if (!silent && btn) { btn.disabled=false; btn.textContent='Enrich existing rows'; }
   }
 }
 
