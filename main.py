@@ -712,6 +712,41 @@ async def get_analytics(password: str):
     return [{"ts":r[0],"ip":r[1],"ua":r[2],"event":r[3],
              "county_id":r[4],"county":r[5],"state":r[6]} for r in rows]
 
+@app.get("/api/analytics/summary")
+async def get_analytics_summary(password: str):
+    check_auth(password)
+    con = _analytics_conn()
+    total_visits   = con.execute("SELECT COUNT(*) FROM events WHERE event='visit'").fetchone()[0]
+    unique_ips     = con.execute("SELECT COUNT(DISTINCT ip) FROM events WHERE event='visit'").fetchone()[0]
+    today_visits   = con.execute("SELECT COUNT(*) FROM events WHERE event='visit' AND ts >= date('now')").fetchone()[0]
+    top_counties   = con.execute("""
+        SELECT county, state, COUNT(*) as cnt FROM events
+        WHERE event='county_click' AND county IS NOT NULL
+        GROUP BY county, state ORDER BY cnt DESC LIMIT 10
+    """).fetchall()
+    recent         = con.execute("""
+        SELECT ts, ip, ua, event, county, state FROM events
+        ORDER BY ts DESC LIMIT 50
+    """).fetchall()
+    by_day         = con.execute("""
+        SELECT substr(ts,1,10) as day, COUNT(*) as cnt
+        FROM events WHERE event='visit'
+        GROUP BY day ORDER BY day DESC LIMIT 30
+    """).fetchall()
+    con.close()
+    return {
+        "total_visits": total_visits,
+        "unique_ips": unique_ips,
+        "today_visits": today_visits,
+        "top_counties": [{"county":r[0],"state":r[1],"clicks":r[2]} for r in top_counties],
+        "recent": [{"ts":r[0],"ip":r[1],"ua":r[2],"event":r[3],"county":r[4],"state":r[5]} for r in recent],
+        "by_day": [{"day":r[0],"visits":r[1]} for r in by_day],
+    }
+
+@app.get("/analytics")
+async def analytics_page():
+    return FileResponse(BASE / "analytics.html")
+
 @app.get("/test")
 def test_page():
     html = """<!DOCTYPE html><html><head><title>Map Diagnostics</title></head><body>
