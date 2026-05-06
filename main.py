@@ -117,7 +117,6 @@ try:
 except Exception:
     pass
 PW_HASH          = "b3121997c76507dc7adcf3ca13ee60d519cbc3c72a176527e8ba575fc13f3406"
-ANALYTICS_PW_HASH = "4e69d4c0cc487375fdc8a4a93e93c9570b3663b6fbd7fb595efce7e74d49b888"  # JoshAnalytics26
 
 # ── Security headers ──────────────────────────────────────────────────────
 SECURITY_HEADERS = {
@@ -139,14 +138,6 @@ def check_auth(password: str):
         raise HTTPException(status_code=401, detail="Password required")
     h = hashlib.sha256(password.encode()).hexdigest()
     if h != PW_HASH:
-        raise HTTPException(status_code=401, detail="Invalid password")
-
-def check_analytics_auth(password: str):
-    """Accepts either the admin password or the analytics viewer password."""
-    if not password:
-        raise HTTPException(status_code=401, detail="Password required")
-    h = hashlib.sha256(password.encode()).hexdigest()
-    if h not in (PW_HASH, ANALYTICS_PW_HASH):
         raise HTTPException(status_code=401, detail="Invalid password")
 
 # ── Block any direct file access not explicitly allowed ───────────────────
@@ -742,7 +733,7 @@ async def log_click(request: Request):
 
 @app.get("/api/analytics")
 async def get_analytics(password: str):
-    check_analytics_auth(password)
+    check_auth(password)
     con = _analytics_conn()
     rows = con.execute("""
         SELECT ts, ip, ua, event, county_id, county, state
@@ -754,7 +745,7 @@ async def get_analytics(password: str):
 
 @app.get("/api/analytics/summary")
 async def get_analytics_summary(password: str, exclude_ip: str = None):
-    check_analytics_auth(password)
+    check_auth(password)
     con = _analytics_conn()
     ex = exclude_ip or ''
     total_visits   = con.execute("SELECT COUNT(*) FROM events WHERE event='visit' AND (? = '' OR ip != ?)", (ex, ex)).fetchone()[0]
@@ -809,7 +800,7 @@ async def get_analytics_summary(password: str, exclude_ip: str = None):
 @app.post("/api/analytics/backfill-geo")
 async def backfill_geo(password: str):
     """Enrich existing visit rows that have no state with IP geolocation."""
-    check_analytics_auth(password)
+    check_auth(password)
     con = _analytics_conn()
     rows = con.execute(
         "SELECT id, ip FROM events WHERE event IN ('visit','embed') AND (state IS NULL OR state='') AND ip IS NOT NULL"
