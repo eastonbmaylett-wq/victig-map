@@ -152,6 +152,9 @@
 </div>
 
 <script>
+const LS_KEY = 'victig_analytics_session';
+const SESSION_TTL = 24 * 60 * 60 * 1000; // 24 hours
+
 let _pw = '';
 let _myIp = '';
 let _allRecent = [];
@@ -163,23 +166,43 @@ fetch('/api/my-ip').then(r=>r.json()).then(d=>{
   const badge = document.getElementById('my-ip-badge');
   if (badge) badge.textContent = `(you: ${_myIp})`;
   if (_allRecent.length) renderVisitors();
-  // Fire pending callbacks (e.g. reload summary with IP exclusion)
   _myIpReadyCallbacks.forEach(cb => cb());
   _myIpReadyCallbacks = [];
 });
+
+// Auto-login from localStorage if session is < 24h old
+(function tryAutoLogin() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
+    if (stored && stored.pw && (Date.now() - stored.ts) < SESSION_TTL) {
+      _pw = stored.pw;
+      fetch(summaryUrl())
+        .then(r => { if (!r.ok) { localStorage.removeItem(LS_KEY); return null; } return r.json(); })
+        .then(data => {
+          if (!data) return;
+          document.getElementById('login-screen').style.display = 'none';
+          document.getElementById('app').style.display = 'block';
+          render(data);
+          _myIpReadyCallbacks.push(() => refreshData());
+          backfillGeo(true);
+        }).catch(() => localStorage.removeItem(LS_KEY));
+    }
+  } catch(e) {}
+})();
 
 function doLogin() {
   const pw = document.getElementById('pw-input').value;
   if (!pw) return;
   _pw = pw;
-  // Use pw directly here — _myIp may not be set yet; re-render chart after IP resolves
   fetch(`/api/analytics/summary?password=${encodeURIComponent(pw)}`)
     .then(r => { if (!r.ok) throw new Error('bad'); return r.json(); })
     .then(data => {
+      _pw = pw;
+      // Persist session for 24h
+      try { localStorage.setItem(LS_KEY, JSON.stringify({pw, ts: Date.now()})); } catch(e) {}
       document.getElementById('login-screen').style.display = 'none';
       document.getElementById('app').style.display = 'block';
       render(data);
-      // Once IP is known, reload summary with exclusion
       _myIpReadyCallbacks.push(() => refreshData());
       backfillGeo(true);
     })
@@ -266,7 +289,7 @@ function renderVisitors() {
   }).join('');
 }
 
-async function summaryUrl() {
+function summaryUrl() {
   let u = `/api/analytics/summary?password=${encodeURIComponent(_pw)}`;
   if (_myIp) u += `&exclude_ip=${encodeURIComponent(_myIp)}`;
   return u;
