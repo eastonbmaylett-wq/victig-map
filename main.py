@@ -743,6 +743,11 @@ async def get_analytics_summary(password: str):
         "by_day": [{"day":r[0],"visits":r[1]} for r in by_day],
     }
 
+@app.get("/api/my-ip")
+async def my_ip(request: Request):
+    ip = request.headers.get('x-forwarded-for', request.client.host).split(',')[0].strip()
+    return {"ip": ip}
+
 @app.get("/analytics")
 async def analytics_page():
     return FileResponse(BASE / "analytics.html")

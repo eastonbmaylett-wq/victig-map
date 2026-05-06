@@ -106,7 +106,12 @@
     </div>
 
     <div class="section">
-      <div class="section-header">🕐 Recent Activity <span style="font-size:11px;color:#aaa;font-weight:400;margin-left:auto">last 50 events</span></div>
+      <div class="section-header">🕐 Recent Activity <span style="font-size:11px;color:#aaa;font-weight:400;margin-left:auto">last 50 events</span>
+        <label style="margin-left:16px;font-size:12px;font-weight:400;color:#555;display:flex;align-items:center;gap:5px;cursor:pointer">
+          <input type="checkbox" id="hide-me" onchange="renderRecent()" style="cursor:pointer"> Hide my visits
+        </label>
+        <span id="my-ip-badge" style="margin-left:8px;font-size:11px;color:#aaa;font-family:monospace"></span>
+      </div>
       <div class="section-body">
         <table>
           <thead><tr><th>Time</th><th>Event</th><th>IP</th><th>County</th><th>Browser / Device</th></tr></thead>
@@ -120,6 +125,14 @@
 
 <script>
 let _pw = '';
+let _myIp = '';
+let _allRecent = [];
+
+fetch('/api/my-ip').then(r=>r.json()).then(d=>{
+  _myIp = d.ip;
+  const badge = document.getElementById('my-ip-badge');
+  if (badge) badge.textContent = `(you: ${_myIp})`;
+});
 
 function doLogin() {
   const pw = document.getElementById('pw-input').value;
@@ -159,17 +172,25 @@ function render(d) {
     ? d.top_counties.map((r,i) => `<tr><td style="color:#888">${i+1}</td><td>${r.county||'—'}</td><td>${r.state||'—'}</td><td><b>${r.clicks}</b></td></tr>`).join('')
     : '<tr><td colspan="4" style="color:#aaa;padding:16px">No county clicks yet</td></tr>';
 
-  // Recent activity
+  _allRecent = d.recent;
+  renderRecent();
+}
+
+function renderRecent() {
+  const hideMe = document.getElementById('hide-me')?.checked;
+  const rows = hideMe && _myIp ? _allRecent.filter(r => r.ip !== _myIp) : _allRecent;
   const rtb = document.getElementById('recent-tbody');
-  rtb.innerHTML = d.recent.map(r => {
+  rtb.innerHTML = rows.map(r => {
+    const isMe = _myIp && r.ip === _myIp;
+    const rowStyle = isMe ? 'background:#fffbeb;' : '';
     const t = r.ts ? r.ts.replace('T',' ').slice(0,19) : '—';
     const badge = r.event === 'visit'
       ? '<span class="badge badge-visit">Visit</span>'
       : '<span class="badge badge-click">Click</span>';
     const county = r.county ? `${r.county}${r.state ? ', '+r.state : ''}` : '—';
     const ua = parseUA(r.ua || '');
-    return `<tr>
-      <td style="white-space:nowrap;color:#555">${t}</td>
+    return `<tr style="${rowStyle}">
+      <td style="white-space:nowrap;color:#555">${t}${isMe ? ' <span style="font-size:10px;color:#b45309">you</span>' : ''}</td>
       <td>${badge}</td>
       <td style="font-family:monospace;font-size:11px">${r.ip||'—'}</td>
       <td>${county}</td>
@@ -177,6 +198,7 @@ function render(d) {
     </tr>`;
   }).join('') || '<tr><td colspan="5" style="color:#aaa;padding:16px">No activity yet</td></tr>';
 }
+
 
 function parseUA(ua) {
   if (!ua) return '—';
