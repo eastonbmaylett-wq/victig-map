@@ -22,6 +22,16 @@ except Exception:
 DATA_FILE   = DATA_DIR / "county-data.json"
 CONFIG_FILE = DATA_DIR / "site-config.json"
 
+# Seed volume from bundled files on first boot
+_BUNDLED_DATA   = BASE / "county-data.json"
+_BUNDLED_CONFIG = BASE / "site-config.json"
+if not DATA_FILE.exists() and _BUNDLED_DATA.exists():
+    try: shutil.copy(_BUNDLED_DATA, DATA_FILE)
+    except Exception: pass
+if not CONFIG_FILE.exists() and _BUNDLED_CONFIG.exists():
+    try: shutil.copy(_BUNDLED_CONFIG, CONFIG_FILE)
+    except Exception: pass
+
 from fastapi.staticfiles import StaticFiles
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 
