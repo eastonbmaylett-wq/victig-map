@@ -91,6 +91,18 @@
     </div>
 
     <div class="section">
+      <div class="section-header">👥 Visitors <span style="font-size:11px;color:#aaa;font-weight:400;margin-left:6px">excluding you</span>
+        <span id="visitor-count-badge" style="margin-left:auto;font-size:12px;font-weight:600;color:#1a4a8a"></span>
+      </div>
+      <div class="section-body">
+        <table>
+          <thead><tr><th>First Seen</th><th>Last Seen</th><th>IP</th><th>Location</th><th>Visits</th><th>Counties Clicked</th><th>Device</th></tr></thead>
+          <tbody id="visitors-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="section">
       <div class="section-header">📅 Visits by Day <span style="font-size:11px;color:#aaa;font-weight:400;margin-left:auto">last 30 days</span></div>
       <div class="section-body" id="chart-wrap"></div>
     </div>
@@ -145,6 +157,8 @@ fetch('/api/my-ip').then(r=>r.json()).then(d=>{
   _myIp = d.ip;
   const badge = document.getElementById('my-ip-badge');
   if (badge) badge.textContent = `(you: ${_myIp})`;
+  // Re-render now that we know who we are
+  if (_allRecent.length) renderVisitors();
 });
 
 function doLogin() {
@@ -193,6 +207,7 @@ function render(d) {
 
   _allRecent = d.recent;
   renderRecent();
+  renderVisitors();
 }
 
 function renderRecent() {
@@ -218,6 +233,48 @@ function renderRecent() {
   }).join('') || '<tr><td colspan="5" style="color:#aaa;padding:16px">No activity yet</td></tr>';
 }
 
+
+function renderVisitors() {
+  // Group all events by IP, exclude my own IP
+  const others = _allRecent.filter(r => r.ip && r.ip !== _myIp);
+  const byIp = {};
+  for (const r of others) {
+    if (!byIp[r.ip]) byIp[r.ip] = { ip: r.ip, events: [], visits: 0, counties: new Set(), location: '', ua: r.ua };
+    byIp[r.ip].events.push(r.ts);
+    if (r.event === 'visit' || r.event === 'embed') byIp[r.ip].visits++;
+    if (r.event === 'county_click' && r.county) byIp[r.ip].counties.add(r.county);
+    if (r.state && !byIp[r.ip].location) byIp[r.ip].location = r.state;
+  }
+  const visitors = Object.values(byIp).sort((a,b) => {
+    const la = Math.max(...a.events.map(t => new Date(t)));
+    const lb = Math.max(...b.events.map(t => new Date(t)));
+    return lb - la;
+  });
+
+  const badge = document.getElementById('visitor-count-badge');
+  if (badge) badge.textContent = visitors.length ? `${visitors.length} unique visitor${visitors.length > 1 ? 's' : ''}` : 'No visitors yet';
+
+  const vtb = document.getElementById('visitors-tbody');
+  if (!visitors.length) {
+    vtb.innerHTML = '<tr><td colspan="7" style="color:#aaa;padding:16px">No outside visitors yet — share the map!</td></tr>';
+    return;
+  }
+  vtb.innerHTML = visitors.map(v => {
+    const sorted = [...v.events].sort();
+    const first = sorted[0]?.replace('T',' ').slice(0,16) || '—';
+    const last  = sorted[sorted.length-1]?.replace('T',' ').slice(0,16) || '—';
+    const counties = v.counties.size ? [...v.counties].slice(0,3).join(', ') + (v.counties.size > 3 ? ` +${v.counties.size-3}` : '') : '—';
+    return `<tr>
+      <td style="white-space:nowrap;font-size:11px;color:#555">${first}</td>
+      <td style="white-space:nowrap;font-size:11px;color:#555">${last}</td>
+      <td style="font-family:monospace;font-size:11px">${v.ip}</td>
+      <td style="font-size:12px">${v.location || '<span style="color:#ccc">Unknown</span>'}</td>
+      <td style="font-weight:600;color:#1a4a8a">${v.visits}</td>
+      <td style="font-size:11px;color:#555">${counties}</td>
+      <td style="font-size:11px;color:#888">${parseUA(v.ua)}</td>
+    </tr>`;
+  }).join('');
+}
 
 async function backfillGeo() {
   const btn = document.getElementById('backfill-btn');
