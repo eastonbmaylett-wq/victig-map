@@ -758,8 +758,22 @@ async def get_analytics_summary(password: str, exclude_ip: str = None):
     """, (ex, ex)).fetchall()
     recent         = con.execute("""
         SELECT ts, ip, ua, event, county, state FROM events
-        ORDER BY ts DESC LIMIT 50
+        ORDER BY ts DESC LIMIT 200
     """).fetchall()
+    visitors       = con.execute("""
+        SELECT ip,
+               MIN(ts) as first_seen,
+               MAX(ts) as last_seen,
+               SUM(CASE WHEN event IN ('visit','embed') THEN 1 ELSE 0 END) as visits,
+               GROUP_CONCAT(DISTINCT county) as counties,
+               MAX(ua) as ua,
+               MAX(state) as location
+        FROM events
+        WHERE ip IS NOT NULL AND (? = '' OR ip != ?)
+        GROUP BY ip
+        ORDER BY last_seen DESC
+        LIMIT 200
+    """, (ex, ex)).fetchall()
     by_day         = con.execute("""
         SELECT substr(ts,1,10) as day, COUNT(*) as cnt
         FROM events WHERE event='visit' AND (? = '' OR ip != ?)
@@ -779,6 +793,8 @@ async def get_analytics_summary(password: str, exclude_ip: str = None):
         "top_states": [{"state":r[0],"visits":r[1]} for r in top_states],
         "recent": [{"ts":r[0],"ip":r[1],"ua":r[2],"event":r[3],"county":r[4],"state":r[5]} for r in recent],
         "by_day": [{"day":r[0],"visits":r[1]} for r in by_day],
+        "visitors": [{"ip":r[0],"first_seen":r[1],"last_seen":r[2],"visits":r[3],
+                       "counties":r[4],"ua":r[5],"location":r[6]} for r in visitors],
     }
 
 @app.post("/api/analytics/backfill-geo")

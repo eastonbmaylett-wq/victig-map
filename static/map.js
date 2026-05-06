@@ -347,8 +347,10 @@ function onCountyClick(event, d){
     </div>`;
   }
 
-  const descHtml = c.description
-    ? `<div class="p-desc">${c.description}</div>`
+  const rawDesc = c.description ? c.description.trimEnd() : '';
+  const descText = rawDesc && !/[.!?]$/.test(rawDesc) ? rawDesc + '.' : rawDesc;
+  const descHtml = descText
+    ? `<div class="p-desc">${descText}</div>`
     : `<div class="p-desc" style="border-left-color:#55ae5c;color:#888">No active court delays reported for this county.</div>`;
 
   const latestHtml = c.latest ? `

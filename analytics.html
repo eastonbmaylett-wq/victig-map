@@ -81,6 +81,10 @@
   </div>
   <div class="content">
 
+    <div style="display:flex;justify-content:flex-end;margin-bottom:14px">
+      <button onclick="refreshData()" style="background:#1a4a8a;color:#fff;border:none;border-radius:8px;padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px">&#x21bb; Refresh</button>
+    </div>
+
     <div class="stats-row">
       <div class="stat-card"><div class="label">Total Visits</div><div class="value" id="s-total">—</div></div>
       <div class="stat-card"><div class="label">Unique Visitors</div><div class="value" id="s-unique">—</div></div>
@@ -151,6 +155,7 @@
 let _pw = '';
 let _myIp = '';
 let _allRecent = [];
+let _allVisitors = [];
 let _myIpReadyCallbacks = [];
 
 fetch('/api/my-ip').then(r=>r.json()).then(d=>{
@@ -204,7 +209,8 @@ function render(d) {
     ? d.top_counties.map((r,i) => `<tr><td style="color:#888">${i+1}</td><td>${r.county||'—'}</td><td>${r.state||'—'}</td><td><b>${r.clicks}</b></td></tr>`).join('')
     : '<tr><td colspan="4" style="color:#aaa;padding:16px">No county clicks yet</td></tr>';
 
-  _allRecent = d.recent;
+  _allRecent = d.recent || [];
+  _allVisitors = d.visitors || [];
   renderRecent();
   renderVisitors();
 }
@@ -234,24 +240,10 @@ function renderRecent() {
 
 
 function renderVisitors() {
-  // Group all events by IP, exclude my own IP
-  const others = _allRecent.filter(r => r.ip && r.ip !== _myIp);
-  const byIp = {};
-  for (const r of others) {
-    if (!byIp[r.ip]) byIp[r.ip] = { ip: r.ip, events: [], visits: 0, counties: new Set(), location: '', ua: r.ua };
-    byIp[r.ip].events.push(r.ts);
-    if (r.event === 'visit' || r.event === 'embed') byIp[r.ip].visits++;
-    if (r.event === 'county_click' && r.county) byIp[r.ip].counties.add(r.county);
-    if (r.state && !byIp[r.ip].location) byIp[r.ip].location = r.state;
-  }
-  const visitors = Object.values(byIp).sort((a,b) => {
-    const la = Math.max(...a.events.map(t => new Date(t)));
-    const lb = Math.max(...b.events.map(t => new Date(t)));
-    return lb - la;
-  });
+  const visitors = _allVisitors; // pre-filtered server-side (own IP excluded)
 
   const badge = document.getElementById('visitor-count-badge');
-  if (badge) badge.textContent = visitors.length ? `${visitors.length} unique visitor${visitors.length > 1 ? 's' : ''}` : 'No visitors yet';
+  if (badge) badge.textContent = visitors.length ? `${visitors.length} unique visitor${visitors.length !== 1 ? 's' : ''}` : 'No visitors yet';
 
   const vtb = document.getElementById('visitors-tbody');
   if (!visitors.length) {
@@ -259,10 +251,9 @@ function renderVisitors() {
     return;
   }
   vtb.innerHTML = visitors.map(v => {
-    const sorted = [...v.events].sort();
-    const first = sorted[0]?.replace('T',' ').slice(0,16) || '—';
-    const last  = sorted[sorted.length-1]?.replace('T',' ').slice(0,16) || '—';
-    const counties = v.counties.size ? [...v.counties].slice(0,3).join(', ') + (v.counties.size > 3 ? ` +${v.counties.size-3}` : '') : '—';
+    const first = (v.first_seen || '').replace('T',' ').slice(0,16) || '—';
+    const last  = (v.last_seen  || '').replace('T',' ').slice(0,16) || '—';
+    const counties = v.counties ? v.counties.split(',').filter(Boolean).slice(0,3).join(', ') + (v.counties.split(',').length > 3 ? ` +${v.counties.split(',').length-3}` : '') : '—';
     return `<tr>
       <td style="white-space:nowrap;font-size:11px;color:#555">${first}</td>
       <td style="white-space:nowrap;font-size:11px;color:#555">${last}</td>
