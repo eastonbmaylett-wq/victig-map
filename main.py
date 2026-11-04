@@ -960,12 +960,13 @@ async def get_analytics_summary(password: str, exclude_ip: str = None, range: st
     }
 
 @app.post("/api/analytics/backfill-geo")
-async def backfill_geo(password: str):
+async def backfill_geo(password: str, after_id: int = 0):
     """Enrich existing visit rows that have no state with IP geolocation."""
     check_auth(password)
     con = _analytics_conn()
     rows = con.execute(
-        "SELECT id, ip FROM events WHERE event IN ('visit','embed') AND (state IS NULL OR state='') AND ip IS NOT NULL"
+        "SELECT id, ip FROM events WHERE event IN ('visit','embed') AND (state IS NULL OR state='') AND ip IS NOT NULL AND id>? ORDER BY id LIMIT 10",
+        (after_id,),
     ).fetchall()
     con.close()
     enriched = 0
@@ -978,7 +979,15 @@ async def backfill_geo(password: str):
             c.commit(); c.close()
             enriched += 1
         await asyncio.sleep(0.05)  # stay under ip-api.com rate limit (45/min)
-    return {"enriched": enriched, "total": len(rows)}
+    next_id = rows[-1][0] if rows else after_id
+    con = _analytics_conn()
+    remaining = con.execute(
+        "SELECT COUNT(*) FROM events WHERE event IN ('visit','embed') AND (state IS NULL OR state='') AND ip IS NOT NULL AND id>?",
+        (next_id,),
+    ).fetchone()[0]
+    con.close()
+    return {"enriched": enriched, "total": len(rows), "next_after_id": next_id,
+            "has_more": remaining > 0}
 
 @app.get("/api/my-ip")
 async def my_ip(request: Request):

@@ -38,6 +38,8 @@ abandoned uploads.
 Function processing stops after 48 seconds. A timeout or failed validation
 does not publish any map changes. Test the largest normal report in a preview
 before cutover. The existing 100 MB TAT and 25 MB closure file limits remain.
+Legacy location enrichment runs in batches of ten records, with the browser
+continuing through the remaining batches. Each batch fits the function limit.
 
 `POST /api/migration/analytics` accepts the legacy SQLite snapshot with the
 ingestion bearer token. It checks database integrity and imports historical rows
@@ -80,8 +82,6 @@ with a freshly verified current revision when a data rollback is required.
 
 - Move from the legacy shared admin password to individual authenticated users.
   Password rotation and account changes are separate from this migration.
-- Replace bulk legacy geolocation backfill with bounded jobs if the existing
-  history cannot finish within the function time limit.
 - Audit the unrelated unmatched Alaska geometry separately.
 - The legacy importer can choose different records for ambiguous county/city
   names because it iterates an unordered set. Parity tests use the same Python

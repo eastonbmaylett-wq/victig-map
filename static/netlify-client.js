@@ -10,6 +10,18 @@
       headers.set('X-Victig-Password', url.searchParams.get('password'));
       url.searchParams.delete('password');
     }
+    if (url.pathname === '/api/analytics/backfill-geo' && options.method === 'POST') {
+      let enriched = 0, total = 0;
+      while (true) {
+        const response = await nativeFetch(url, { ...options, headers });
+        if (!response.ok) return response;
+        const result = await response.json();
+        enriched += result.enriched || 0;
+        total += result.total || 0;
+        if (!result.has_more) return Response.json({ enriched, total });
+        url.searchParams.set('after_id', result.next_after_id);
+      }
+    }
     if (!(options.body instanceof FormData)) return nativeFetch(url, { ...options, headers });
     const encoded = new Response(options.body);
     const bytes = new Uint8Array(await encoded.arrayBuffer());
