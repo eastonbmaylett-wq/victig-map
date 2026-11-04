@@ -1,4 +1,7 @@
 
+// Edit mode — set when loaded from admin preview
+const EDIT_TOKEN = new URLSearchParams(location.hash.slice(1)).get('edit_token') || '';
+
 const STATUS = {
   ok:          {fill:'#55ae5c',label:'No Delay',        badge:'#d4edda',text:'#155724'},
   delay:       {fill:'#dea922',label:'Delay',            badge:'#fff3cd',text:'#856404'},
@@ -85,6 +88,9 @@ function dimmed(fips){ return false; }
 // ── Init ─────────────────────────────────────────────────────────────────
 function setStatus(msg){ document.getElementById('data-date').textContent = msg; }
 
+let fastestOverrides = Array(10).fill(null); // from site-config.json
+let slowestOverrides = Array(10).fill(null);
+
 async function init(){
   setStatus('Loading map data…');
   let topo, data;
@@ -94,9 +100,23 @@ async function init(){
     if (!topoRes.ok) throw new Error('boundaries HTTP ' + topoRes.status);
     topo = await topoRes.json();
     setStatus('Fetching county stats…');
-    const dataRes  = await fetch('county-data.json');
+    const [dataRes, cfgRes] = await Promise.all([
+      fetch('county-data.json'),
+      fetch('site-config.json').catch(() => null)
+    ]);
     if (!dataRes.ok) throw new Error('county-data HTTP ' + dataRes.status);
     data = await dataRes.json();
+    if (cfgRes && cfgRes.ok) {
+      try {
+        const cfg = await cfgRes.json();
+        if (Array.isArray(cfg.fastest_overrides) && cfg.fastest_overrides.length === 10)
+          fastestOverrides = cfg.fastest_overrides;
+        else if (Array.isArray(cfg.medal_overrides))
+          fastestOverrides = [...cfg.medal_overrides, ...Array(7).fill(null)];
+        if (Array.isArray(cfg.slowest_overrides) && cfg.slowest_overrides.length === 10)
+          slowestOverrides = cfg.slowest_overrides;
+      } catch(e) {}
+    }
   } catch(e) {
     setStatus('Load error: ' + e.message);
     console.error(e);
@@ -175,7 +195,8 @@ function drawMap(topo){
 
   // Exclude Pacific territories (GU/AS/MP) from fitSize — they break Albers USA projection
   const fitFeatures = {...allCounties, features: allCounties.features.filter(f=>!String(f.id).match(/^(60|66|69)/)) };
-  const proj = d3.geoAlbersUsa().fitSize([W,H], fitFeatures);
+  // Offset center left to account for right-side panels; add vertical padding for breathing room
+  const proj = d3.geoAlbersUsa().fitExtent([[20, 40], [W - 180, H - 30]], fitFeatures);
   const path = d3.geoPath().projection(proj);
   pathFn = path;
   stateFeatures = allStates.features;
@@ -209,6 +230,7 @@ function drawMap(topo){
 
   // Zoom
   svgZoom = d3.zoom().scaleExtent([0.5,12])
+    .translateExtent([[-W*0.4, -H*0.4], [W*1.4, H*1.4]])
     .on('zoom',(event)=>{
       gSel.attr('transform',event.transform);
       const k = event.transform.k;
@@ -313,14 +335,18 @@ function onCountyClick(event, d){
     perfHtml = `<div style="font-size:11px;margin-bottom:8px;color:#555">Search Time: <strong style="color:${color}">${label}</strong></div>`;
   }
 
+  const inp = (id, val, ph='') => EDIT_TOKEN
+    ? `<input id="${id}" value="${(val||'').replace(/"/g,'&quot;')}" placeholder="${ph}" style="width:100%;padding:3px 6px;border:1.5px solid #ddd;border-radius:5px;font-size:12px;font-weight:600;color:#1a2b45;background:#f8f9ff">`
+    : `<div class="p-val">${val||'—'}</div>`;
+
   let statsHtml = '';
   if(s){
     const rankPct = s.rank ? Math.round((1-s.rank/s.total)*100) : null;
     statsHtml = `
       <div class="p-grid">
-        <div><div class="p-lbl">Avg TAT</div><div class="p-val">${c._overrides?.avg || daysToReadable(s.avg)}</div></div>
-        <div><div class="p-lbl">Max TAT</div><div class="p-val">${c._overrides?.max || daysToReadable(s.max)}</div></div>
-        <div><div class="p-lbl">Min TAT</div><div class="p-val">${c._overrides?.min || daysToReadable(s.min)}</div></div>
+        <div><div class="p-lbl">Avg TAT</div>${inp('ov-avg', c._overrides?.avg || daysToReadable(s.avg), 'e.g. 2h 15m')}</div>
+        <div><div class="p-lbl">Max TAT</div>${inp('ov-max', c._overrides?.max || daysToReadable(s.max), 'e.g. 14d')}</div>
+        <div><div class="p-lbl">Min TAT</div>${inp('ov-min', c._overrides?.min || daysToReadable(s.min), 'e.g. 4h')}</div>
         ${c.state_avg ? `<div><div class="p-lbl">${c.state} Statewide Avg</div><div class="p-val">${daysToReadable(c.state_avg.avg)}</div></div>` : ''}
       </div>
       ${rankPct !== null ? `<div class="p-rank">Faster than <strong>${rankPct}%</strong> of all US counties (#${s.rank} of ${s.total.toLocaleString()})</div>` : ''}
@@ -349,17 +375,19 @@ function onCountyClick(event, d){
 
   const rawDesc = c.description ? c.description.trimEnd() : '';
   const descText = rawDesc && !/[.!?]$/.test(rawDesc) ? rawDesc + '.' : rawDesc;
-  const descHtml = descText
-    ? `<div class="p-desc">${descText}</div>`
-    : `<div class="p-desc" style="border-left-color:#55ae5c;color:#888">No active court delays reported for this county.</div>`;
+  const descHtml = EDIT_TOKEN
+    ? `<textarea id="inline-desc" rows="3" style="width:100%;padding:7px 9px;border:1.5px solid #ddd;border-radius:6px;font-size:12px;resize:vertical;line-height:1.5;margin-top:4px">${c.description||''}</textarea>`
+    : (descText
+        ? `<div class="p-desc">${descText}</div>`
+        : `<div class="p-desc" style="border-left-color:#55ae5c;color:#888">No active court delays reported for this county.</div>`);
 
   const latestHtml = c.latest ? `
     <div class="p-latest">
       <div class="p-latest-title">Most Recent Search</div>
       <div class="p-latest-row"><span class="p-latest-lbl">Started</span><span>${c.latest.date}</span></div>
       ${c.latest.completion ? `<div class="p-latest-row"><span class="p-latest-lbl">Completed</span><span>${c.latest.completion}</span></div>` : ''}
-      <div class="p-latest-row"><span class="p-latest-lbl">TAT</span><span><b>${c._overrides?.latest_tat || daysToReadable(c.latest.tat)}</b></span></div>
-      <div class="p-latest-row"><span class="p-latest-lbl">Type</span><span>${c.latest.search}</span></div>
+      <div class="p-latest-row"><span class="p-latest-lbl">TAT</span>${inp('ov-latest-tat', c._overrides?.latest_tat || daysToReadable(c.latest.tat), 'e.g. 3h 20m')}</div>
+      <div class="p-latest-row"><span class="p-latest-lbl">Type</span><span>${(c.latest.search||'').split(' - ')[0].trim()}</span></div>
     </div>` : '';
 
   const outHtml = (c.outliers && c.outliers.length) ? `
@@ -376,11 +404,30 @@ function onCountyClick(event, d){
   fetch('/api/log/click', {method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({fips: d.id, county: c.name, state: c.state})}).catch(()=>{});
 
+  const editHtml = EDIT_TOKEN ? `
+    <div style="margin-top:12px;border-top:2px solid #e8eaed;padding-top:12px">
+      <div style="margin-bottom:8px">
+        <div class="p-lbl">Status</div>
+        <select id="inline-status" style="width:100%;padding:6px 8px;border-radius:6px;border:1.5px solid #ddd;font-size:12px">
+          <option value="ok"    ${getStatus(d.id)==='ok'?'selected':''}>✅ No Delay</option>
+          <option value="delay" ${getStatus(d.id)==='delay'?'selected':''}>🟡 Delay</option>
+          <option value="high_tat" ${getStatus(d.id)==='high_tat'?'selected':''}>🟠 Avg TAT >14 Days</option>
+          <option value="significant" ${getStatus(d.id)==='significant'?'selected':''}>🔴 Significant Delay</option>
+        </select>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:10px">
+        <button onclick="saveInlineEdit('${d.id}')" style="padding:7px 18px;background:#1a2b45;color:white;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600">Save</button>
+        <button onclick="closePopup()" style="padding:7px 12px;background:#f0f0f0;color:#555;border:none;border-radius:6px;cursor:pointer;font-size:12px">Cancel</button>
+        <span id="inline-save-status" style="font-size:12px"></span>
+      </div>
+    </div>` : '';
+
   document.getElementById('popup-body').innerHTML = `
     <h3>${c.name} County, ${c.state}</h3>
     <span class="p-badge" style="background:${sc.badge};color:${sc.text}">${sc.label}</span>
     ${perfHtml}
     ${statsHtml}${stateAvgHtml}${outHtml}${latestHtml}${descHtml}
+    ${editHtml}
 `;
 
   const popup = document.getElementById('popup');
@@ -402,6 +449,38 @@ function onCountyClick(event, d){
   popup.style.left = x+'px'; popup.style.top = y+'px';
 }
 function closePopup(){ document.getElementById('popup').style.display='none'; }
+
+async function saveInlineEdit(fips){
+  const status      = document.getElementById('inline-status')?.value;
+  const description = document.getElementById('inline-desc')?.value || '';
+  const overrides = {
+    avg:        document.getElementById('ov-avg')?.value || '',
+    max:        document.getElementById('ov-max')?.value || '',
+    min:        document.getElementById('ov-min')?.value || '',
+    latest_tat: document.getElementById('ov-latest-tat')?.value || '',
+  };
+  const statusEl = document.getElementById('inline-save-status');
+  if(statusEl) statusEl.textContent = 'Saving…';
+  try {
+    const res = await fetch('/admin/update-county', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({password: EDIT_TOKEN, fips, status, description, overrides})
+    });
+    if(!res.ok) throw new Error('fail');
+    if(counties[fips]){
+      counties[fips].status = status;
+      counties[fips].description = description;
+      counties[fips]._overrides = Object.fromEntries(Object.entries(overrides).filter(([,v])=>v));
+    }
+    localOverrides[fips] = {status, description};
+    refreshColors();
+    if(statusEl){ statusEl.textContent = '✓ Saved'; statusEl.style.color='#155724'; }
+    setTimeout(closePopup, 800);
+  } catch(e){
+    if(statusEl){ statusEl.textContent = 'Error saving'; statusEl.style.color='#721c24'; }
+  }
+}
 document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ closePopup(); closeAdmin(); }});
 
 // Toolbar removed — defaults: 90d, all searches, gradient color, no filter
@@ -434,25 +513,73 @@ function buildPanels(){
     .map(([fips,c])=>({fips, c, s: getStats(fips)}))
     .filter(x=> x.s && x.s.count >= 1);
 
-  const fastest = [...eligible].sort((a,b)=>a.s.avg-b.s.avg).slice(0,10);
-  const slowest = [...eligible].sort((a,b)=>b.s.avg-a.s.avg).slice(0,10);
+  const autoFastest = [...eligible].sort((a,b)=>a.s.avg-b.s.avg);
+  const autoSlowest = [...eligible].sort((a,b)=>b.s.avg-a.s.avg);
 
-  document.getElementById('panel-fastest').innerHTML = fastest.map((x,i)=>`
-    <div class="rank-row" onclick="flyTo('${x.fips}')">
-      <span class="rank-medal">${i<3?MEDALS[i]:''}</span>
-      <span class="rank-num">${i>=3?i+1:''}</span>
-      <div><div class="rank-name">${x.c.name}, ${x.c.state}</div></div>
-    </div>`).join('');
+  // Apply overrides: each slot is [] (auto) or [fips, ...] (tied)
+  // Returns list of {fips, c, s, medalPos} where medalPos = display position (0-based)
+  function applyOverrides(autoList, overrides) {
+    const N = 10;
+    const result = [];
+    const usedFips = new Set();
 
-  document.getElementById('panel-slowest').innerHTML = slowest.map((x,i)=>`
-    <div class="rank-row" onclick="flyTo('${x.fips}')">
-      <span class="rank-medal">${i<3?['🔴','🟠','🟡'][i]:''}</span>
-      <span class="rank-num">${i>=3?i+1:''}</span>
-      <div><div class="rank-name">${x.c.name}, ${x.c.state}</div></div>
-    </div>`).join('');
+    for (let pos = 0; pos < N; pos++) {
+      // Normalise slot: handle [], null, string (backward compat), or [fips,...]
+      let slot = overrides[pos];
+      if (!slot) slot = [];
+      if (typeof slot === 'string') slot = [slot];
+      const validSlot = slot.filter(f => f && autoList.find(e => e.fips === f) && !usedFips.has(f));
 
-  // Draw medal labels on the map over top-3 fastest counties
-  currentMedalData = fastest.slice(0,3);
+      if (validSlot.length > 0) {
+        // Pinned: all tied counties share this medal position
+        for (const f of validSlot) {
+          const entry = autoList.find(e => e.fips === f);
+          if (entry) { result.push({...entry, medalPos: pos}); usedFips.add(f); }
+        }
+      } else {
+        // Auto: next unused county from auto list
+        const next = autoList.find(e => !usedFips.has(e.fips));
+        if (next) { result.push({...next, medalPos: pos}); usedFips.add(next.fips); }
+      }
+    }
+
+    // Append any remaining auto counties beyond the 10 pinned slots
+    for (const x of autoList) {
+      if (!usedFips.has(x.fips)) { result.push({...x, medalPos: result.length}); usedFips.add(x.fips); }
+    }
+
+    return result;
+  }
+
+  const fastest = applyOverrides(autoFastest, fastestOverrides);
+  const slowest = applyOverrides(autoSlowest, slowestOverrides);
+
+  document.getElementById('panel-fastest').innerHTML = fastest.slice(0,13).map((x)=>{
+    const pos = x.medalPos ?? 99;
+    return `<div class="rank-row" onclick="flyTo('${x.fips}')">
+      <span class="rank-medal">${pos<3?MEDALS[pos]:''}</span>
+      <span class="rank-num">${pos>=3?pos+1:''}</span>
+      <div>
+        <div class="rank-name">${x.c.name}, ${x.c.state}</div>
+        <div class="rank-tat">${daysToReadable(x.s.avg)} avg</div>
+      </div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('panel-slowest').innerHTML = slowest.slice(0,13).map((x)=>{
+    const pos = x.medalPos ?? 99;
+    return `<div class="rank-row" onclick="flyTo('${x.fips}')">
+      <span class="rank-medal">${pos<3?['🔴','🟠','🟡'][pos]:''}</span>
+      <span class="rank-num">${pos>=3?pos+1:''}</span>
+      <div>
+        <div class="rank-name">${x.c.name}, ${x.c.state}</div>
+        <div class="rank-tat">${daysToReadable(x.s.avg)} avg</div>
+      </div>
+    </div>`;
+  }).join('');
+
+  // Draw medals on map: all counties with medalPos 0/1/2
+  currentMedalData = fastest.filter(x => (x.medalPos ?? 99) < 3);
   placeMedalsOnMap(currentMedalData);
 }
 
@@ -467,7 +594,8 @@ function placeMedalsOnMap(top3){
   const transform = d3.zoomTransform(svgSel.node());
   const layer = svgSel.append('g').attr('class','medal-layer');
 
-  top3.forEach((x, i) => {
+  top3.forEach((x) => {
+    const i = x.medalPos ?? 0;
     const el = countyPaths[x.fips];
     if(!el) return;
     // Get centroid in gSel coordinate space
@@ -580,11 +708,8 @@ function flyTo(fips){
   searchRes.style.display='none'; searchEl.value='';
   const el = countyPaths[fips];
   if(!el) return;
-  // Zoom to county
-  const bounds = d3.geoPath().projection(
-    d3.geoAlbersUsa().fitSize([svgSel.attr('width'), svgSel.attr('height')],
-      topojson.feature(topoData, topoData.objects.counties))
-  ).bounds(el.__data__);
+  // Use the same pathFn projection the map was rendered with
+  const bounds = pathFn.bounds(el.__data__);
   const W = +svgSel.attr('width'), H = +svgSel.attr('height');
   svgSel.transition().duration(600).call(svgZoom.transform, zoomToBounds(bounds,W,H));
   setTimeout(()=> el.dispatchEvent(new MouseEvent('click',{bubbles:true,clientX:W/2,clientY:H/2})), 650);
@@ -592,7 +717,6 @@ function flyTo(fips){
 
 // ── Password Gate ────────────────────────────────────────────────────────
 // SHA-256 of the admin password — change this hash to change the password
-// Current password: Victig2026!  (hash it at sha256.online or ask Alfred)
 const PW_HASH = 'b3121997c76507dc7adcf3ca13ee60d519cbc3c72a176527e8ba575fc13f3406';
 let adminUnlocked = !!sessionStorage.getItem('victig_admin');
 let pendingAdminFips = null;

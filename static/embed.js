@@ -89,24 +89,57 @@ function drawMap(topo){
 
 function showPopup(ev,d){
   const c=counties[d.id]||{}; const sc=STATUS[c.status]||STATUS.no_data;
-  const p90=c.periods?.['90d']; const lat=c.latest;
+  const p90=c.periods?.['90d']||c.periods?.['180d']||c.periods?.['60d']||c.periods?.['30d'];
+  const lat=c.latest;
   document.getElementById('tooltip').style.display='none';
   document.getElementById('popup-name').textContent=`${c.name||d.id} County, ${c.state||''}`;
-  document.getElementById('popup-body').innerHTML=`
-    <span class="p-badge" style="background:${sc.badge};color:${sc.text}">${sc.label}</span>
-    ${p90?`<div class="p-stat">Avg TAT (90d): <b>${fmtTAT(p90.avg)}</b> &nbsp;|&nbsp; Max: ${fmtTAT(p90.max)}</div>`:''}
 
-    ${lat?`<div class="p-stat" style="font-size:11px;color:#aaa">Last search: ${lat.date}</div>`:''}
-    ${c.description?`<div class="p-desc">${c.description}</div>`:
-      (c.status==='ok'||!c.status)?`<div style="font-size:11px;color:#55ae5c;margin-top:4px">✓ No active court delays</div>`:''}
+  const statsHtml = p90 ? `
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:10px 0;text-align:center">
+      <div style="background:#f8f9fb;border-radius:6px;padding:7px 4px">
+        <div style="font-size:9px;color:#aaa;text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px">Avg TAT</div>
+        <div style="font-size:14px;font-weight:700;color:#1a2b45">${fmtTAT(p90.avg)}</div>
+      </div>
+      <div style="background:#f8f9fb;border-radius:6px;padding:7px 4px">
+        <div style="font-size:9px;color:#aaa;text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px">Max TAT</div>
+        <div style="font-size:14px;font-weight:700;color:#1a2b45">${fmtTAT(p90.max)}</div>
+      </div>
+      <div style="background:#f8f9fb;border-radius:6px;padding:7px 4px">
+        <div style="font-size:9px;color:#aaa;text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px">Min TAT</div>
+        <div style="font-size:14px;font-weight:700;color:#1a2b45">${fmtTAT(p90.min)}</div>
+      </div>
+    </div>` : '';
+
+  const latestHtml = lat ? `
+    <div style="border-top:1px solid #f0f0f0;margin-top:8px;padding-top:8px;font-size:11px">
+      <div style="font-size:10px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:.4px;margin-bottom:5px">Most Recent Search</div>
+      <div style="display:flex;justify-content:space-between;margin-bottom:2px"><span style="color:#aaa">Started</span><span>${lat.date}</span></div>
+      ${lat.completion?`<div style="display:flex;justify-content:space-between;margin-bottom:2px"><span style="color:#aaa">Completed</span><span>${lat.completion}</span></div>`:''}
+      <div style="display:flex;justify-content:space-between"><span style="color:#aaa">TAT</span><span><b>${fmtTAT(lat.tat)}</b></span></div>
+    </div>` : '';
+
+  const rawDesc = c.description ? c.description.trimEnd() : '';
+  const descText = rawDesc && !/[.!?]$/.test(rawDesc) ? rawDesc + '.' : rawDesc;
+  const descHtml = descText
+    ? `<div class="p-desc" style="margin-top:8px">${descText}</div>`
+    : (c.status==='ok'||!c.status) ? `<div style="font-size:11px;color:#55ae5c;margin-top:8px;border-left:3px solid #55ae5c;padding-left:7px;background:#f0faf2;border-radius:0 4px 4px 0;padding:5px 7px">✓ No active court delays reported.</div>` : '';
+
+  document.getElementById('popup-body').innerHTML = `
+    <span class="p-badge" style="background:${sc.badge};color:${sc.text}">${sc.label}</span>
+    ${statsHtml}${latestHtml}${descHtml}
   `;
+
   const popup=document.getElementById('popup');
   popup.style.display='block';
   const wrap=document.getElementById('wrap');
-  let x=ev.offsetX+14, y=ev.offsetY-10;
-  if(x+250>wrap.clientWidth) x=ev.offsetX-260;
-  if(y+200>wrap.clientHeight) y=wrap.clientHeight-210;
-  popup.style.left=x+'px'; popup.style.top=Math.max(4,y)+'px';
+  const pw=popup.offsetWidth||280, ph=popup.offsetHeight||200;
+  const pad=10;
+  let x=ev.offsetX+16, y=ev.offsetY-20;
+  if(x+pw+pad>wrap.clientWidth) x=ev.offsetX-pw-8;
+  if(y+ph+pad>wrap.clientHeight) y=wrap.clientHeight-ph-pad;
+  if(y<pad) y=pad;
+  if(x<pad) x=pad;
+  popup.style.left=x+'px'; popup.style.top=y+'px';
 }
 function closePopup(){ document.getElementById('popup').style.display='none'; }
 document.addEventListener('click',e=>{ if(!e.target.closest('#popup')&&!e.target.closest('.county')) closePopup(); });

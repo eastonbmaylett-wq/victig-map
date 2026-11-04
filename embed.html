@@ -6,32 +6,91 @@
 <title>Victig Court Search — TAT Map</title>
 <script src="/d3.min.js"></script>
 <script src="/topojson-client.min.js"></script>
-<link rel="stylesheet" href="/static/embed.css">
+<link rel="stylesheet" href="/static/map.css">
+<style>
+  /* Hide admin-only elements */
+  #pw-gate, #overlay, #admin-panel, #update-banner { display: none !important; }
+</style>
 </head>
 <body>
-<div id="wrap">
-  <svg id="map-svg"></svg>
-  <div id="legend">
-    <div class="leg-row"><div class="leg-sw" style="background:#55ae5c"></div>No Delay</div>
-    <div class="leg-row"><div class="leg-sw" style="background:#dea922"></div>Delay</div>
-    <div class="leg-row"><div class="leg-sw" style="background:#de7612"></div>Avg TAT &gt;14d</div>
-    <div class="leg-row"><div class="leg-sw" style="background:#cf4027"></div>Significant Delay</div>
-    <div class="leg-row"><div class="leg-sw" style="background:#55ae5c"></div>No Data</div>
+
+<div id="header">
+  <div style="display:flex;align-items:center;gap:14px">
+    <img id="header-logo" src="/victig-logo-white.png" alt="Victig Background Checks">
+    <div><div class="subtitle" id="data-date">Loading…</div></div>
   </div>
-  <div id="zoom-btns">
-    <button id="z-in" title="Zoom in">+</button>
-    <button id="z-reset" title="Reset">⌂</button>
-    <button id="z-out" title="Zoom out">−</button>
+  <span id="delayed-badge">— delayed</span>
+  <div id="search-wrap">
+    <input id="search" type="text" placeholder="Search county or state…" autocomplete="off">
+    <div id="search-results"></div>
   </div>
-  <div id="data-info"></div>
-  <div id="tooltip"></div>
-  <div id="popup">
-    <span id="popup-close" onclick="closePopup()">✕</span>
-    <h3 id="popup-name"></h3>
-    <div id="popup-body"></div>
-  </div>
-  <div id="brand">victig.com</div>
 </div>
-<script src="/static/embed.js"></script>
+
+<div id="update-banner" style="display:none"></div>
+
+<div id="map-wrap">
+  <svg id="map-svg"></svg>
+  <div id="zoom-controls">
+    <button id="z-in">+</button>
+    <button id="z-reset">⌂</button>
+    <button id="z-out">−</button>
+  </div>
+  <div id="tooltip"></div>
+  <div id="popup"><span id="popup-close" onclick="closePopup()">×</span><div id="popup-body"></div></div>
+
+  <div id="panels">
+    <div class="side-panel">
+      <div class="panel-header" onclick="togglePanel('fastest')">
+        <h4>🥇 Fastest Counties</h4><span class="panel-toggle" id="tog-fastest">▲</span>
+      </div>
+      <div class="panel-body" id="panel-fastest"></div>
+    </div>
+    <div class="side-panel">
+      <div class="panel-header" onclick="togglePanel('slowest')">
+        <h4>🐢 Slowest Counties</h4><span class="panel-toggle" id="tog-slowest">▲</span>
+      </div>
+      <div class="panel-body" id="panel-slowest"></div>
+    </div>
+  </div>
+
+  <div id="legend">
+    <div id="legend-gradient">
+      <h4>Avg TAT (days)</h4>
+      <div id="gradient-bar"></div>
+      <div id="gradient-labels"><span>Fastest</span><span>Slowest</span></div>
+    </div>
+  </div>
+</div>
+
+<div id="pw-gate" style="display:none">
+  <h3>🔒 Admin Access</h3>
+  <p>Enter the admin password to edit county statuses.</p>
+  <input id="pw-input" type="password" placeholder="Password" onkeydown="if(event.key==='Enter')submitPw()">
+  <div id="pw-error"></div>
+  <div class="btn-row">
+    <button id="pw-cancel-btn" onclick="cancelPw()">Cancel</button>
+    <button id="pw-submit" onclick="submitPw()">Unlock</button>
+  </div>
+</div>
+<div id="overlay" style="display:none" onclick="closeAdmin()"></div>
+<div id="admin-panel" style="display:none">
+  <h3>Edit County Status</h3>
+  <div id="admin-lbl"></div>
+  <select id="admin-status">
+    <option value="ok">✅ No Delay</option>
+    <option value="delay">🟡 Delay</option>
+    <option value="high_tat">🟠 Avg TAT &gt;14 Days</option>
+    <option value="significant">🔴 Significant Delay</option>
+  </select>
+  <textarea id="admin-desc" placeholder="Delay description (optional)…"></textarea>
+  <div class="btn-row">
+    <button id="admin-save" onclick="saveAdmin()">Save</button>
+    <button id="admin-cancel" onclick="closeAdmin()">Cancel</button>
+  </div>
+</div>
+
+<a href="/" target="_blank" style="position:fixed;bottom:10px;right:10px;z-index:400;background:rgba(255,255,255,.85);color:#1a2b45;font-size:10px;font-weight:600;padding:4px 9px;border-radius:10px;text-decoration:none;box-shadow:0 1px 4px rgba(0,0,0,.15);backdrop-filter:blur(4px)">↗ Full Map</a>
+
+<script src="/static/map.js"></script>
 </body>
 </html>
