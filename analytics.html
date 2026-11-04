@@ -54,6 +54,11 @@
   .badge-click  { background: #e6f4ea; color: #1e7e34; }
   .ua-cell { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #888; font-size: 11px; }
 
+  /* Range filter buttons */
+  .range-btn { background: transparent; border: none; border-radius: 6px; padding: 5px 13px; font-size: 12px; font-weight: 500; cursor: pointer; color: #555; transition: background .15s, color .15s; }
+  .range-btn:hover { background: #f0f2f5; }
+  .range-btn.active { background: #1a4a8a; color: #fff; font-weight: 600; }
+
   @media (max-width: 640px) {
     .stats-row { grid-template-columns: 1fr 1fr; }
     .stats-row .stat-card:last-child { grid-column: span 2; }
@@ -81,13 +86,19 @@
   </div>
   <div class="content">
 
-    <div style="display:flex;justify-content:flex-end;margin-bottom:14px">
-      <button onclick="refreshData()" style="background:#1a4a8a;color:#fff;border:none;border-radius:8px;padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px">&#x21bb; Refresh</button>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+      <div style="display:flex;gap:6px;background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:4px">
+        <button class="range-btn" data-range="today"  onclick="setRange('today')">Today</button>
+        <button class="range-btn" data-range="week"   onclick="setRange('week')">Last 7 Days</button>
+        <button class="range-btn" data-range="month"  onclick="setRange('month')">Last 30 Days</button>
+        <button class="range-btn" data-range="all"    onclick="setRange('all')">All Time</button>
+      </div>
+      <button onclick="refreshData()" style="margin-left:auto;background:#1a4a8a;color:#fff;border:none;border-radius:8px;padding:8px 18px;font-size:13px;font-weight:600;cursor:pointer">&#x21bb; Refresh</button>
     </div>
 
     <div class="stats-row">
-      <div class="stat-card"><div class="label">Total Visits</div><div class="value" id="s-total">—</div></div>
-      <div class="stat-card"><div class="label">Unique Visitors</div><div class="value" id="s-unique">—</div></div>
+      <div class="stat-card"><div class="label" id="label-total">Total Visits</div><div class="value" id="s-total">—</div></div>
+      <div class="stat-card"><div class="label" id="label-unique">Unique Visitors</div><div class="value" id="s-unique">—</div></div>
       <div class="stat-card"><div class="label">Visits Today</div><div class="value" id="s-today">—</div></div>
     </div>
 
@@ -124,7 +135,11 @@
     </div>
 
     <div class="section">
-      <div class="section-header">🗺️ Most Clicked Counties</div>
+      <div class="section-header">🗺️ Most Clicked Counties
+        <label style="margin-left:auto;font-size:12px;font-weight:400;color:#555;display:flex;align-items:center;gap:5px;cursor:pointer">
+          <input type="checkbox" id="include-me-counties" checked onchange="renderCounties()" style="cursor:pointer"> Include my clicks
+        </label>
+      </div>
       <div class="section-body">
         <table>
           <thead><tr><th>#</th><th>County</th><th>State</th><th>Clicks</th></tr></thead>
@@ -142,7 +157,7 @@
       </div>
       <div class="section-body">
         <table>
-          <thead><tr><th>Time</th><th>Event</th><th>IP</th><th>County</th><th>Browser / Device</th></tr></thead>
+          <thead><tr><th>Time</th><th>Event</th><th>IP</th><th>Location</th><th>County</th><th>Browser / Device</th></tr></thead>
           <tbody id="recent-tbody"></tbody>
         </table>
       </div>
@@ -159,6 +174,7 @@ let _pw = '';
 let _myIp = '';
 let _allRecent = [];
 let _allVisitors = [];
+let _allData = null;
 let _myIpReadyCallbacks = [];
 
 fetch('/api/my-ip').then(r=>r.json()).then(d=>{
@@ -168,6 +184,11 @@ fetch('/api/my-ip').then(r=>r.json()).then(d=>{
   if (_allRecent.length) renderVisitors();
   _myIpReadyCallbacks.forEach(cb => cb());
   _myIpReadyCallbacks = [];
+});
+
+// Set default active range button on load
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('.range-btn').forEach(b => b.classList.toggle('active', b.dataset.range === _range));
 });
 
 // Auto-login from localStorage if session is < 24h old
@@ -212,6 +233,9 @@ function doLogin() {
 }
 
 function render(d) {
+  const rangeLabel = {today:'Today',week:'Last 7 Days',month:'Last 30 Days',all:'All Time'}[d.range||'all'];
+  document.getElementById('label-total').textContent  = `Visits — ${rangeLabel}`;
+  document.getElementById('label-unique').textContent = `Unique Visitors — ${rangeLabel}`;
   document.getElementById('s-total').textContent  = d.total_visits.toLocaleString();
   document.getElementById('s-unique').textContent = d.unique_ips.toLocaleString();
   document.getElementById('s-today').textContent  = d.today_visits.toLocaleString();
@@ -226,16 +250,23 @@ function render(d) {
     ? d.top_states.map((r,i) => `<tr><td style="color:#888">${i+1}</td><td>${r.state||'—'}</td><td><b>${r.visits}</b></td></tr>`).join('')
     : '<tr><td colspan="3" style="color:#aaa;padding:16px">No location data yet — visit the map or click "Enrich existing rows"</td></tr>';
 
-  // Top counties
-  const ctb = document.getElementById('county-tbody');
-  ctb.innerHTML = d.top_counties.length
-    ? d.top_counties.map((r,i) => `<tr><td style="color:#888">${i+1}</td><td>${r.county||'—'}</td><td>${r.state||'—'}</td><td><b>${r.clicks}</b></td></tr>`).join('')
-    : '<tr><td colspan="4" style="color:#aaa;padding:16px">No county clicks yet</td></tr>';
-
+  // Top counties + recent + visitors
+  _allData = d;
   _allRecent = d.recent || [];
   _allVisitors = d.visitors || [];
+  renderCounties();
   renderRecent();
   renderVisitors();
+}
+
+function renderCounties(){
+  const includeMe = document.getElementById('include-me-counties')?.checked ?? true;
+  const rows = includeMe ? (_allData?.top_counties||[]) : (_allData?.top_counties_excl||[]);
+  const ctb = document.getElementById('county-tbody');
+  if(!ctb) return;
+  ctb.innerHTML = rows.length
+    ? rows.map((r,i) => `<tr><td style="color:#888">${i+1}</td><td>${r.county||'—'}</td><td>${r.state||'—'}</td><td><b>${r.clicks}</b></td></tr>`).join('')
+    : '<tr><td colspan="4" style="color:#aaa;padding:16px">No county clicks yet</td></tr>';
 }
 
 function renderRecent() {
@@ -249,12 +280,14 @@ function renderRecent() {
     const badge = r.event === 'visit'
       ? '<span class="badge badge-visit">Visit</span>'
       : '<span class="badge badge-click">Click</span>';
-    const county = r.county ? `${r.county}${r.state ? ', '+r.state : ''}` : '—';
+    const location = r.event === 'visit' ? (r.state || '—') : '—';
+    const county = r.event !== 'visit' ? (r.county ? `${r.county}${r.state ? ', '+r.state : ''}` : '—') : '—';
     const ua = parseUA(r.ua || '');
     return `<tr style="${rowStyle}">
-      <td style="white-space:nowrap;color:#555">${t}${isMe ? ' <span style="font-size:10px;color:#b45309">you</span>' : ''}</td>
+      <td style="white-space:nowrap;color:#555">${t}${isMe ? ' <span style="font-size:10px;color:#b45309">your IP</span>' : ''}</td>
       <td>${badge}</td>
       <td style="font-family:monospace;font-size:11px">${r.ip||'—'}</td>
+      <td>${location}</td>
       <td>${county}</td>
       <td class="ua-cell" title="${(r.ua||'').replace(/"/g,'&quot;')}">${ua}</td>
     </tr>`;
@@ -289,8 +322,16 @@ function renderVisitors() {
   }).join('');
 }
 
+let _range = 'today';
+
+function setRange(r) {
+  _range = r;
+  document.querySelectorAll('.range-btn').forEach(b => b.classList.toggle('active', b.dataset.range === r));
+  refreshData();
+}
+
 function summaryUrl() {
-  let u = `/api/analytics/summary?password=${encodeURIComponent(_pw)}`;
+  let u = `/api/analytics/summary?password=${encodeURIComponent(_pw)}&range=${_range}`;
   if (_myIp) u += `&exclude_ip=${encodeURIComponent(_myIp)}`;
   return u;
 }

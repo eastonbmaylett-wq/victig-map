@@ -1,0 +1,11 @@
+{
+  "name": "victig-tat-map",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "python3 netlify/build.py",
+    "test:netlify": "node --test tests/netlify.test.mjs"
+  },
+  "engines": { "node": ">=22" },
+  "dependencies": { "@netlify/blobs": "11.1.7" }
+}

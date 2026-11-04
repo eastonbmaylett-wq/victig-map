@@ -1,0 +1,123 @@
+"""Invoke the production FastAPI app once, with invocation-local files.
+
+Input/output use files so neither request bodies nor credentials enter logs.
+The Node adapter owns durable storage, optimistic concurrency, and rollback.
+"""
+import asyncio
+import base64
+import contextlib
+import io
+import json
+import os
+import hashlib
+import sqlite3
+import sys
+from pathlib import Path
+from urllib.parse import parse_qsl, urlencode
+
+
+async def invoke(payload):
+    # Suppress startup diagnostics from the response channel. Errors remain private.
+    with contextlib.redirect_stdout(io.StringIO()):
+        import main
+    from starlette.requests import Request
+    from public_data import strip_private_fields
+
+    # The same existing password remains valid. It travels in a header on
+    # Netlify, while the unchanged FastAPI route receives it internally.
+    headers = [(str(k).lower(), str(v)) for k, v in payload.get("headers", [])]
+    header_map = dict(headers)
+    query = dict(parse_qsl(payload.get("query", ""), keep_blank_values=True))
+    if header_map.get("x-victig-password"):
+        query["password"] = header_map["x-victig-password"]
+    body = base64.b64decode(payload.get("body", ""))
+    if header_map.get("x-victig-password") and header_map.get("content-type", "").startswith("application/json"):
+        document = json.loads(body or b"{}")
+        if isinstance(document, dict):
+            document["password"] = header_map["x-victig-password"]
+            body = json.dumps(document).encode()
+    scope = {
+        "type": "http", "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1", "method": payload["method"],
+        "scheme": "https", "path": payload["path"],
+        "raw_path": payload["path"].encode(), "query_string": urlencode(query).encode(),
+        "root_path": "", "headers": [(k.encode(), v.encode()) for k, v in headers],
+        "client": (payload.get("ip", "127.0.0.1"), 0), "server": ("netlify", 443),
+    }
+    consumed = False
+    finished = asyncio.Event()
+    chunks = []
+    result = {"status": 500, "headers": []}
+
+    async def receive():
+        nonlocal consumed
+        if not consumed:
+            consumed = True
+            return {"type": "http.request", "body": body, "more_body": False}
+        await finished.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        if message["type"] == "http.response.start":
+            result["status"] = message["status"]
+            result["headers"] = [(k.decode(), v.decode()) for k, v in message["headers"]]
+        elif message["type"] == "http.response.body":
+            chunks.append(message.get("body", b""))
+            if not message.get("more_body", False):
+                finished.set()
+
+    if payload["path"] == "/api/log/visit":
+        request = Request(scope, receive)
+        event = json.loads(body or b"{}").get("event", "visit")
+        if event not in {"visit", "embed"}:
+            raise ValueError("Invalid visit event")
+        row_id = main._log_event(request, event)
+        if row_id and payload.get("location"):
+            con = main._analytics_conn()
+            con.execute("UPDATE events SET state=? WHERE id=?", (payload["location"], row_id))
+            con.commit()
+            con.close()
+        return {"status": 200, "headers": [["content-type", "application/json"]],
+                "body": base64.b64encode(b'{"ok":true}').decode()}
+
+    if payload["path"] == "/api/migration/analytics":
+        legacy_file = main.DATA_DIR / "legacy-analytics.db"
+        legacy_file.write_bytes(body)
+        legacy = sqlite3.connect(f"file:{legacy_file}?mode=ro", uri=True)
+        if legacy.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+            raise ValueError("Legacy analytics database failed its integrity check")
+        rows = legacy.execute("SELECT id,ts,ip,ua,event,county_id,county,state FROM events ORDER BY id").fetchall()
+        legacy.close()
+        con = main._analytics_conn()
+        con.execute("CREATE TABLE IF NOT EXISTS fly_migration_rows (legacy_id INTEGER PRIMARY KEY, event_id INTEGER NOT NULL)")
+        inserted = 0
+        with con:
+            for legacy_id, *values in rows:
+                prior = con.execute("SELECT event_id FROM fly_migration_rows WHERE legacy_id=?", (legacy_id,)).fetchone()
+                if prior:
+                    con.execute("UPDATE events SET ts=?,ip=?,ua=?,event=?,county_id=?,county=?,state=? WHERE id=?", (*values, prior[0]))
+                else:
+                    cursor = con.execute("INSERT INTO events(ts,ip,ua,event,county_id,county,state) VALUES (?,?,?,?,?,?,?)", values)
+                    con.execute("INSERT INTO fly_migration_rows(legacy_id,event_id) VALUES (?,?)", (legacy_id, cursor.lastrowid))
+                    inserted += 1
+        total = con.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+        con.close()
+        result = {"ok": True, "sourceRows": len(rows), "inserted": inserted,
+                  "totalRows": total, "sha256": hashlib.sha256(body).hexdigest()}
+        return {"status": 200, "headers": [["content-type", "application/json"]],
+                "body": base64.b64encode(json.dumps(result).encode()).decode()}
+
+    await main.app(scope, receive, send)
+    if main.DATA_FILE.exists():
+        data = json.loads(main.DATA_FILE.read_text())
+        if strip_private_fields(data):
+            main.DATA_FILE.write_text(json.dumps(data))
+    result["body"] = base64.b64encode(b"".join(chunks)).decode()
+    return result
+
+
+if __name__ == "__main__":
+    source, destination = map(Path, sys.argv[1:3])
+    payload = json.loads(source.read_text())
+    response = asyncio.run(invoke(payload))
+    destination.write_text(json.dumps(response))

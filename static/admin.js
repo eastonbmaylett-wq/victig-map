@@ -47,6 +47,17 @@ async function doLogin(){
 function doLogout(){ sessionStorage.removeItem('victig_admin_token'); location.reload(); }
 
 // ── Load data + map ───────────────────────────────────────────────────────
+function initPreviewIframe(){
+  // Only load once the panel is actually visible — D3 needs real dimensions
+  const iframe = document.getElementById('preview-iframe');
+  if(iframe && !iframe.src.includes('edit_token')){
+    // Small delay ensures the panel is fully visible before the map renders
+    setTimeout(() => {
+      iframe.src = `/#edit_token=${encodeURIComponent(token)}`;
+    }, 50);
+  }
+}
+
 async function loadAll(){
   const [topo, data] = await Promise.all([
     fetch('/counties-10m.json').then(r=>r.json()),
@@ -66,6 +77,10 @@ async function loadAll(){
 
   buildLists();
   drawMap(topo);
+
+  // Restore last active tab AFTER data + map are ready
+  const savedTab = sessionStorage.getItem('victig_admin_tab');
+  if(savedTab && savedTab !== 'map') switchTab(savedTab);
 }
 
 // ── Map ───────────────────────────────────────────────────────────────────
@@ -505,18 +520,263 @@ async function doDescImport(){
   document.getElementById('desc-import-btn').disabled=false;
 }
 
-// ── Embed panel ────────────────────────────────────────────────
-let embedOpen = false;
-function toggleEmbedPanel(){
-  embedOpen = !embedOpen;
-  document.getElementById('embed-panel').style.display = embedOpen ? 'block' : 'none';
-  document.getElementById('body').style.display = embedOpen ? 'none' : 'grid';
-  document.getElementById('embed-nav-btn').style.background = embedOpen ? 'rgba(255,255,255,.3)' : 'rgba(255,255,255,.12)';
-  if(embedOpen) updateIframe();
+// ── Tab switching ────────────────────────────────────────────────
+let activeTab = 'map';
+function switchTab(tab){
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  // Hide all panels — use visibility trick for preview so iframe stays loaded
+  document.querySelectorAll('.tab-panel').forEach(p => {
+    if(p.id === 'tab-preview'){
+      p.style.visibility = 'hidden';
+      p.style.position = 'absolute';
+      p.style.pointerEvents = 'none';
+      p.style.display = 'flex';
+    } else {
+      p.style.display = 'none';
+      p.style.visibility = '';
+      p.style.position = '';
+      p.style.pointerEvents = '';
+    }
+  });
+  // Show selected
+  const panel = document.getElementById('tab-' + tab);
+  panel.style.display = 'flex';
+  panel.style.visibility = 'visible';
+  panel.style.position = '';
+  panel.style.pointerEvents = '';
+  document.querySelector(`.tab-btn[data-tab="${tab}"]`).classList.add('active');
+  activeTab = tab;
+  sessionStorage.setItem('victig_admin_tab', tab);
+  if(tab === 'analytics') loadAnalyticsPanel();
+  if(tab === 'embed') updateIframe();
+  if(tab === 'preview') initPreviewIframe();
+  if(tab === 'medals') initMedalsTab();
+}
+
+// Legacy stubs (keep in case anything references them)
+function toggleEmbedPanel(){ switchTab('embed'); }
+function toggleAnalyticsPanel(){ switchTab('analytics'); }
+
+let _analyticsData = null;
+let _analyticsMyIp = '';
+let _analyticsRange = 'today';
+let _analyticsExcludeSlc = true;
+
+async function loadAnalyticsPanel(forceRefresh = true){
+  const panel = document.getElementById('tab-analytics');
+
+  // Fetch my IP once
+  if(!_analyticsMyIp){
+    try { const r = await fetch('/api/my-ip'); const d = await r.json(); _analyticsMyIp = d.ip || ''; } catch(e){}
+  }
+
+  if(forceRefresh || !_analyticsData){
+    panel.innerHTML = '<div style="padding:40px;text-align:center;color:#888">Loading analytics...</div>';
+    let url = `/api/analytics/summary?password=${encodeURIComponent(token)}&range=${_analyticsRange}&exclude_slc=${_analyticsExcludeSlc}`;
+    if(_analyticsMyIp) url += `&exclude_ip=${encodeURIComponent(_analyticsMyIp)}`;
+    try {
+      const res = await fetch(url);
+      if(!res.ok){ panel.innerHTML = '<div style="padding:40px;color:#c0392b">Failed to load analytics.</div>'; return; }
+      _analyticsData = await res.json();
+    } catch(e){ panel.innerHTML = '<div style="padding:40px;color:#c0392b">Error loading analytics.</div>'; return; }
+  }
+
+  panel.innerHTML = renderAnalyticsHTML(_analyticsData, _analyticsMyIp);
+  renderAnalyticsChart(_analyticsData.by_day);
+  // Highlight active range button
+  document.querySelectorAll('.a-range-btn').forEach(b => {
+    b.style.background = b.dataset.range === _analyticsRange ? '#1a4a8a' : 'transparent';
+    b.style.color = b.dataset.range === _analyticsRange ? '#fff' : '#555';
+    b.style.fontWeight = b.dataset.range === _analyticsRange ? '600' : '500';
+  });
+}
+
+function setAnalyticsRange(r){
+  _analyticsRange = r;
+  _analyticsData = null;
+  loadAnalyticsPanel();
+}
+
+function toggleExcludeSlc(){
+  _analyticsExcludeSlc = !_analyticsExcludeSlc;
+  _analyticsData = null;
+  loadAnalyticsPanel();
+}
+
+function buildCountyRows(rows){
+  return rows.map((r,i)=>`<tr><td style="color:#888">${i+1}</td><td>${r.county||'—'}</td><td>${r.state||'—'}</td><td><b>${r.clicks}</b></td></tr>`).join('')
+    || '<tr><td colspan="4" style="color:#aaa;padding:16px">No county clicks yet</td></tr>';
+}
+
+async function adminBackfillGeo(){
+  const btn = document.getElementById('admin-enrich-btn');
+  const status = document.getElementById('admin-enrich-status');
+  if(btn){ btn.disabled=true; btn.textContent='Running...'; }
+  if(status) status.textContent = 'This may take a minute...';
+  try {
+    const r = await fetch(`/api/analytics/backfill-geo?password=${encodeURIComponent(token)}`, {method:'POST'});
+    const d = await r.json();
+    if(status) status.textContent = d.enriched > 0 ? `✓ Enriched ${d.enriched} rows` : 'All rows already enriched';
+    if(d.enriched > 0){ _analyticsData=null; loadAnalyticsPanel(); }
+  } catch(e){
+    if(status) status.textContent = 'Error';
+  }
+  if(btn){ btn.disabled=false; btn.textContent='📍 Enrich Locations'; }
+}
+
+function renderAdminCounties(){
+  if(!_analyticsData) return;
+  const includeMe = document.getElementById('admin-include-me-counties')?.checked;
+  const rows = includeMe ? (_analyticsData.top_counties||[]) : (_analyticsData.top_counties_excl||[]);
+  const tbody = document.getElementById('admin-county-tbody');
+  if(tbody) tbody.innerHTML = buildCountyRows(rows);
+}
+
+function refreshAdminRecent(){
+  // Re-render only the recent tbody without a full reload
+  const hideMe = document.getElementById('admin-hide-me')?.checked;
+  if(!_analyticsData) return;
+  const myIp = _analyticsMyIp;
+  const rows = hideMe && myIp
+    ? (_analyticsData.recent||[]).filter(r => r.ip !== myIp)
+    : (_analyticsData.recent||[]);
+  const tbody = document.getElementById('admin-recent-tbody');
+  if(!tbody) return;
+  tbody.innerHTML = rows.map(r => {
+    const isMe = myIp && r.ip === myIp;
+    const t = (r.ts||'').replace('T',' ').slice(0,19)||'—';
+    const badge = r.event==='visit' ? '<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;text-transform:uppercase;background:#e8f0fe;color:#1a4a8a">Visit</span>'
+      : r.event==='embed' ? '<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;text-transform:uppercase;background:#f3e8ff;color:#6b21a8">Embed</span>'
+      : '<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;text-transform:uppercase;background:#e6f4ea;color:#1e7e34">Click</span>';
+    const location = (r.event==='visit'||r.event==='embed') ? (r.state || '—') : '—';
+    const county = r.event==='click' ? (r.county ? `${r.county}${r.state ? ', '+r.state : ''}` : '—') : '—';
+    return `<tr style="${isMe?'background:#fffbeb;':''}"><td style="white-space:nowrap;color:#555;font-size:11px">${t}${isMe?' <span style="font-size:10px;color:#b45309">your IP</span>':''}</td><td>${badge}</td><td style="font-family:monospace;font-size:11px">${r.ip||'—'}</td><td style="font-size:12px">${location}</td><td style="font-size:12px">${county}</td></tr>`;
+  }).join('') || '<tr><td colspan="5" style="color:#aaa;padding:16px">No activity yet</td></tr>';
+}
+
+function renderAnalyticsHTML(d, myIp){
+  const statsCards = `
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:24px">
+      <div style="background:#fff;border-radius:10px;padding:20px 24px;box-shadow:0 1px 4px rgba(0,0,0,.07)">
+        <div style="font-size:11px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Total Visits</div>
+        <div style="font-size:32px;font-weight:700;color:#1a4a8a">${d.total_visits.toLocaleString()}</div>
+      </div>
+      <div style="background:#fff;border-radius:10px;padding:20px 24px;box-shadow:0 1px 4px rgba(0,0,0,.07)">
+        <div style="font-size:11px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Unique Visitors</div>
+        <div style="font-size:32px;font-weight:700;color:#1a4a8a">${d.unique_ips.toLocaleString()}</div>
+      </div>
+      <div style="background:#fff;border-radius:10px;padding:20px 24px;box-shadow:0 1px 4px rgba(0,0,0,.07)">
+        <div style="font-size:11px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Visits Today</div>
+        <div style="font-size:32px;font-weight:700;color:#1a4a8a">${d.today_visits.toLocaleString()}</div>
+      </div>
+    </div>`;
+
+  const visitorRows = (d.visitors||[]).map(v => {
+    const first = (v.first_seen||'').replace('T',' ').slice(0,16)||'—';
+    const last  = (v.last_seen ||'').replace('T',' ').slice(0,16)||'—';
+    const counties = v.counties ? v.counties.split(',').filter(Boolean).slice(0,3).join(', ')+(v.counties.split(',').length>3?` +${v.counties.split(',').length-3}`:'') : '—';
+    return `<tr><td style="font-size:11px;color:#555;white-space:nowrap">${first}</td><td style="font-size:11px;color:#555;white-space:nowrap">${last}</td><td style="font-family:monospace;font-size:11px">${v.ip}</td><td>${v.location||'<span style="color:#ccc">Unknown</span>'}</td><td style="font-weight:600;color:#1a4a8a">${v.visits}</td><td style="font-size:11px;color:#555">${counties}</td></tr>`;
+  }).join('') || '<tr><td colspan="6" style="color:#aaa;padding:16px">No outside visitors yet</td></tr>';
+
+  const countyRows = buildCountyRows(d.top_counties||[]);
+
+  const recentRows = (d.recent||[]).map(r=>{
+    const isMe = myIp && r.ip===myIp;
+    const t = (r.ts||'').replace('T',' ').slice(0,19)||'—';
+    const badge = r.event==='visit' ? '<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;text-transform:uppercase;background:#e8f0fe;color:#1a4a8a">Visit</span>'
+      : r.event==='embed' ? '<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;text-transform:uppercase;background:#f3e8ff;color:#6b21a8">Embed</span>'
+      : '<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;text-transform:uppercase;background:#e6f4ea;color:#1e7e34">Click</span>';
+    const location = (r.event==='visit'||r.event==='embed') ? (r.state || '—') : '—';
+    const county = r.event==='click' ? (r.county ? `${r.county}${r.state ? ', '+r.state : ''}` : '—') : '—';
+    return `<tr style="${isMe?'background:#fffbeb;':''}"><td style="white-space:nowrap;color:#555;font-size:11px">${t}${isMe?' <span style="font-size:10px;color:#b45309">your IP</span>':''}</td><td>${badge}</td><td style="font-family:monospace;font-size:11px">${r.ip||'—'}</td><td style="font-size:12px">${location}</td><td style="font-size:12px">${county}</td></tr>`;
+  }).join('') || '<tr><td colspan="5" style="color:#aaa;padding:16px">No activity yet</td></tr>';
+
+  const rangeLabel = {today:'Today',week:'Last 7 Days',month:'Last 30 Days',all:'All Time'}[d.range||'all'];
+  const rangeBtns = ['today','week','month','all'].map(r => {
+    const label = {today:'Today',week:'Last 7 Days',month:'Last 30 Days',all:'All Time'}[r];
+    const active = r === _analyticsRange;
+    return `<button class="a-range-btn" data-range="${r}" onclick="setAnalyticsRange('${r}')" style="background:${active?'#1a4a8a':'transparent'};color:${active?'#fff':'#555'};border:none;border-radius:6px;padding:5px 13px;font-size:12px;font-weight:${active?'600':'500'};cursor:pointer">${label}</button>`;
+  }).join('');
+
+  return `
+    <div style="padding:24px 28px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px;flex-wrap:wrap">
+        <h2 style="font-size:18px;font-weight:700;color:#1a2b45">📊 Analytics <span style="font-size:12px;font-weight:400;color:#aaa;margin-left:8px">(excluding you)</span></h2>
+        <div style="display:flex;gap:4px;background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:3px;margin-left:8px">${rangeBtns}</div>
+        <button onclick="toggleExcludeSlc()" style="background:${_analyticsExcludeSlc?'#e8f0fe':'#f0f2f5'};color:${_analyticsExcludeSlc?'#1a4a8a':'#888'};border:1px solid ${_analyticsExcludeSlc?'#c5d8f8':'#ddd'};border-radius:6px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer">${_analyticsExcludeSlc?'✅ Non-SLC Visitors':'All Visitors'}</button>
+        <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+          <button onclick="_analyticsData=null;loadAnalyticsPanel()" style="background:#1a4a8a;color:#fff;border:none;border-radius:8px;padding:7px 18px;font-size:13px;font-weight:600;cursor:pointer">↻ Refresh</button>
+          <button id="admin-enrich-btn" onclick="adminBackfillGeo()" style="background:#f0f2f5;color:#333;border:1px solid #ddd;border-radius:8px;padding:7px 14px;font-size:13px;font-weight:600;cursor:pointer">📍 Enrich Locations</button>
+          <span id="admin-enrich-status" style="font-size:12px;color:#888"></span>
+        </div>
+      </div>
+      ${statsCards.replace('Total Visits', `Visits — ${rangeLabel}`).replace('Unique Visitors', `Unique — ${rangeLabel}`)}
+      <div style="background:#fff;border-radius:10px;box-shadow:0 1px 4px rgba(0,0,0,.07);margin-bottom:20px;overflow:hidden">
+        <div style="padding:14px 20px;border-bottom:1px solid #eee;font-weight:600;font-size:14px">👥 Visitors <span style="font-size:11px;color:#aaa;font-weight:400;margin-left:6px">${(d.visitors||[]).length} unique</span></div>
+        <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px">
+          <thead><tr style="background:#fafafa">${['First Seen','Last Seen','IP','Location','Visits','Counties'].map(h=>`<th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid #eee">${h}</th>`).join('')}</tr></thead>
+          <tbody>${visitorRows}</tbody>
+        </table></div>
+      </div>
+      <div style="background:#fff;border-radius:10px;box-shadow:0 1px 4px rgba(0,0,0,.07);margin-bottom:20px;overflow:hidden">
+        <div style="padding:14px 20px;border-bottom:1px solid #eee;font-weight:600;font-size:14px">📅 Visits by Day <span style="font-size:11px;color:#aaa;font-weight:400;margin-left:auto;float:right">last 30 days</span></div>
+        <div style="padding:16px 20px 12px;overflow-x:auto"><svg id="admin-day-chart" style="display:block;min-width:400px"></svg></div>
+      </div>
+      <div style="background:#fff;border-radius:10px;box-shadow:0 1px 4px rgba(0,0,0,.07);margin-bottom:20px;overflow:hidden">
+        <div style="padding:14px 20px;border-bottom:1px solid #eee;font-weight:600;font-size:14px">🗺️ Most Clicked Counties
+          <label style="margin-left:auto;float:right;font-size:12px;font-weight:400;color:#555;display:inline-flex;align-items:center;gap:5px;cursor:pointer">
+            <input type="checkbox" id="admin-include-me-counties" checked onchange="renderAdminCounties()" style="cursor:pointer"> Include my clicks
+          </label>
+        </div>
+        <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px">
+          <thead><tr style="background:#fafafa">${['#','County','State','Clicks'].map(h=>`<th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid #eee">${h}</th>`).join('')}</tr></thead>
+          <tbody id="admin-county-tbody">${countyRows}</tbody>
+        </table></div>
+      </div>
+      <div style="background:#fff;border-radius:10px;box-shadow:0 1px 4px rgba(0,0,0,.07);margin-bottom:20px;overflow:hidden">
+        <div style="padding:14px 20px;border-bottom:1px solid #eee;font-weight:600;font-size:14px">🕐 Recent Activity
+          <label style="margin-left:auto;float:right;font-size:12px;font-weight:400;color:#555;display:inline-flex;align-items:center;gap:5px;cursor:pointer">
+            <input type="checkbox" id="admin-hide-me" onchange="refreshAdminRecent()" style="cursor:pointer"> Hide my visits
+          </label>
+        </div>
+        <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px">
+          <thead><tr style="background:#fafafa">${['Time','Event','IP','Location','County'].map(h=>`<th style="padding:10px 14px;text-align:left;font-size:11px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid #eee">${h}</th>`).join('')}</tr></thead>
+          <tbody id="admin-recent-tbody">${recentRows}</tbody>
+        </table></div>
+      </div>
+    </div>`;
+}
+
+function renderAnalyticsChart(byDay){
+  const svg = document.getElementById('admin-day-chart');
+  if(!svg || !byDay || !byDay.length) return;
+  const days = [...byDay].reverse();
+  const PAD={top:16,right:16,bottom:48,left:36}, BAR_W=28, GAP=6;
+  const totalW = days.length*(BAR_W+GAP)+PAD.left+PAD.right;
+  const H=180, chartH=H-PAD.top-PAD.bottom;
+  const maxV=Math.max(...days.map(r=>r.visits),1);
+  svg.setAttribute('viewBox',`0 0 ${totalW} ${H}`);
+  svg.setAttribute('height',H);
+  svg.style.minWidth=`${totalW}px`;
+  let bars='';
+  days.forEach((r,i)=>{
+    const x=PAD.left+i*(BAR_W+GAP);
+    const barH=Math.max(2,Math.round(r.visits/maxV*chartH));
+    const y=PAD.top+chartH-barH;
+    const label=r.day.slice(5);
+    bars+=`<rect x="${x}" y="${y}" width="${BAR_W}" height="${barH}" rx="3" fill="#1a4a8a" opacity="0.85"><title>${r.day}: ${r.visits} visit${r.visits!==1?'s':''}</title></rect>`;
+    bars+=`<text x="${x+BAR_W/2}" y="${y-4}" text-anchor="middle" font-size="9.5" fill="#1a4a8a" font-weight="600">${r.visits>0?r.visits:''}</text>`;
+    bars+=`<text x="${x+BAR_W/2}" y="${H-6}" text-anchor="middle" font-size="9" fill="#888" transform="rotate(-45 ${x+BAR_W/2} ${H-6})">${label}</text>`;
+  });
+  bars+=`<line x1="${PAD.left-4}" y1="${PAD.top}" x2="${PAD.left-4}" y2="${PAD.top+chartH}" stroke="#e0e0e0" stroke-width="1"/>`;
+  bars+=`<text x="${PAD.left-8}" y="${PAD.top+4}" text-anchor="end" font-size="9" fill="#aaa">${maxV}</text>`;
+  bars+=`<line x1="${PAD.left-4}" y1="${PAD.top+chartH}" x2="${totalW-PAD.right}" y2="${PAD.top+chartH}" stroke="#e0e0e0" stroke-width="1"/>`;
+  svg.innerHTML=bars;
 }
 function updateIframe(){
   const h = document.getElementById('iframe-height').value;
-  const base = 'https://victig-map-production.up.railway.app';
+  const base = window.location.origin;
+  document.getElementById('link-url').textContent = `${base}/`;
   document.getElementById('iframe-code').value =
     `<iframe src="${base}/embed" width="100%" height="${h}" frameborder="0" style="border-radius:8px;border:1px solid #ddd"></iframe>`;
   document.getElementById('banner-code').value =
@@ -585,15 +845,394 @@ document.addEventListener('drop', e => {
   const file = e.dataTransfer?.files?.[0];
   if(!file) return;
   const type = getFileType(file);
+  // Switch to Import tab so user can see the result
+  switchTab('import');
   if(type === 'doc'){
     handleDocFile(file);
-    // Scroll drop zone into view
-    document.getElementById('doc-drop-zone').scrollIntoView({behavior:'smooth',block:'nearest'});
+    setTimeout(()=>document.getElementById('doc-drop-zone')?.scrollIntoView({behavior:'smooth',block:'nearest'}), 100);
   } else {
     handleFile(file);
-    document.getElementById('drop-zone').scrollIntoView({behavior:'smooth',block:'nearest'});
+    setTimeout(()=>document.getElementById('drop-zone')?.scrollIntoView({behavior:'smooth',block:'nearest'}), 100);
   }
 });
+
+// ── Rankings Override Tab ───────────────────────────────────────────────
+const MEDAL_EMOJI  = ['🥇','🥈','🥉'];
+const SLOW_EMOJI   = ['🔴','🟠','🟡'];
+let _fastestOverrides = Array(10).fill(null).map(() => []);
+let _slowestOverrides = Array(10).fill(null).map(() => []);
+let _medalInited = false;
+
+// Slot state: array of fips per slot, keyed by "which-i"
+// e.g. { 'fastest-0': ['49035','49049'], 'slowest-2': [] }
+const _slotFips = {};
+
+// ── County dropdown ────────────────────────────────────────────────────
+let _ddWhich = null, _ddIdx = null, _ddFocusIdx = -1;
+let _ddCountyList = null; // sorted [{fips, label, avg}]
+let _ddOpen = false;
+
+function _buildCountyList() {
+  if (_ddCountyList) return;
+  _ddCountyList = Object.entries(counties)
+    .map(([fips, c]) => ({ fips, label: `${c.name}, ${c.state}`, avg: _countyAvg(c), state: c.state }))
+    .filter(x => x.avg !== null && counties[x.fips]?.name)
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+function _ddFilter(query) {
+  const q = query.trim().toLowerCase();
+  if (!q) return _ddCountyList.slice(0, 80);
+  return _ddCountyList.filter(x =>
+    x.label.toLowerCase().includes(q) ||
+    x.state.toLowerCase() === q
+  ).slice(0, 80);
+}
+
+function _ddRenderList(items) {
+  const listEl = document.getElementById('cd-list');
+  if (!items.length) {
+    listEl.innerHTML = '<div class="cd-empty">No counties found</div>';
+    return;
+  }
+  listEl.innerHTML = items.map((x, i) => {
+    const tatStr = _avgToReadable(x.avg);
+    return `<div class="cd-item" data-fips="${x.fips}" data-idx="${i}"
+      onmousedown="_ddSelect('${x.fips}','${x.label.replace(/'/g,"&apos;")}')">
+      <span class="cd-name">${x.label}</span>
+      <span class="cd-tat">${tatStr}</span>
+    </div>`;
+  }).join('');
+}
+
+function _openDropdown(which, i, anchorEl) {
+  _buildCountyList();
+  _ddWhich = which;
+  _ddIdx = i;
+  _ddFocusIdx = -1;
+
+  // Use passed anchor element, or fall back to the pill container
+  const anchor = (anchorEl instanceof Element ? anchorEl : null)
+    || document.getElementById(`slot-pills-${which}-${i}`);
+  const dd = document.getElementById('county-dropdown');
+  const rect = anchor ? anchor.getBoundingClientRect() : {bottom: 100, left: 100, width: 240};
+
+  // Position below trigger
+  const spaceBelow = window.innerHeight - rect.bottom;
+  const height = Math.min(220, spaceBelow > 180 ? spaceBelow - 12 : 180);
+  dd.style.top = (rect.bottom + 4) + 'px';
+  dd.style.left = rect.left + 'px';
+  dd.style.width = Math.max(rect.width, 240) + 'px';
+  dd.style.maxHeight = height + 'px';
+
+  // Prefill search with current selection
+  const searchInp = document.getElementById('cd-search-input');
+  searchInp.value = '';
+  _ddRenderList(_ddFilter(''));
+  dd.classList.add('open');
+  _ddOpen = true;
+  setTimeout(() => searchInp.focus(), 10);
+}
+
+function _closeDropdown() {
+  document.getElementById('county-dropdown').classList.remove('open');
+  _ddOpen = false;
+  _ddWhich = null;
+  _ddIdx = null;
+}
+
+function _ddSelect(fips, label) {
+  if (_ddWhich === null) return;
+  const key = `${_ddWhich}-${_ddIdx}`;
+  if (!_slotFips[key]) _slotFips[key] = [];
+  // Avoid duplicates in same slot
+  if (!_slotFips[key].includes(fips)) {
+    _slotFips[key].push(fips);
+  }
+  _closeDropdown();
+  _renderRankingTables(); // re-render entire table so effective autos update
+}
+
+function _renderSlotPills(which, i) {
+  const key = `${which}-${i}`;
+  const arr = _slotFips[key] || [];
+  const container = document.getElementById(`slot-pills-${which}-${i}`);
+  const row = document.getElementById(`mrow-${which}-${i}`);
+  if (!container) return;
+  const pillsHTML = arr.map(f => {
+    const lbl = _fipsToLabel(f);
+    return `<span class="slot-pill" title="${lbl}">
+      <span>${lbl}</span>
+      <span class="slot-pill-x" onclick="_removePill('${which}',${i},'${f}')">✕</span>
+    </span>`;
+  }).join('');
+  container.innerHTML = pillsHTML +
+    `<button class="slot-add-btn" onclick="_openDropdown('${which}',${i},this)">+ Add</button>`;
+  if (row) row.classList.toggle('mrow-overridden', arr.length > 0);
+}
+
+function _removePill(which, i, fips) {
+  const key = `${which}-${i}`;
+  _slotFips[key] = (_slotFips[key] || []).filter(f => f !== fips);
+  _renderRankingTables();
+}
+
+// Keyboard nav in dropdown
+document.addEventListener('keydown', e => {
+  if (!_ddOpen) return;
+  const items = document.querySelectorAll('#cd-list .cd-item');
+  if (e.key === 'Escape') { _closeDropdown(); }
+  else if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    _ddFocusIdx = Math.min(_ddFocusIdx + 1, items.length - 1);
+    items.forEach((el, i) => el.classList.toggle('focused', i === _ddFocusIdx));
+    items[_ddFocusIdx]?.scrollIntoView({block:'nearest'});
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    _ddFocusIdx = Math.max(_ddFocusIdx - 1, 0);
+    items.forEach((el, i) => el.classList.toggle('focused', i === _ddFocusIdx));
+    items[_ddFocusIdx]?.scrollIntoView({block:'nearest'});
+  } else if (e.key === 'Enter' && _ddFocusIdx >= 0) {
+    e.preventDefault();
+    const el = items[_ddFocusIdx];
+    if (el) _ddSelect(el.dataset.fips, el.querySelector('.cd-name').textContent);
+  }
+});
+
+// Close on outside click
+document.addEventListener('mousedown', e => {
+  if (!_ddOpen) return;
+  const dd = document.getElementById('county-dropdown');
+  if (!dd.contains(e.target) && !e.target.closest('[id^="cd-trigger-"]')) {
+    _closeDropdown();
+  }
+});
+
+// Filter as you type in the dropdown search
+document.addEventListener('DOMContentLoaded', () => {
+  const si = document.getElementById('cd-search-input');
+  if (si) si.addEventListener('input', () => {
+    _ddFocusIdx = -1;
+    _ddRenderList(_ddFilter(si.value));
+  });
+});
+
+// ── Tab logic ─────────────────────────────────────────────────────
+function _fipsToLabel(fips) {
+  if (!fips || !counties[fips]) return '';
+  const c = counties[fips];
+  return `${c.name}, ${c.state}`;
+}
+
+function _countyAvg(c) {
+  // Mirror map.js getStats: prefer 90d, then 180d, 60d, 30d
+  const p = c.periods;
+  if (!p) return null;
+  const s = p['90d'] || p['180d'] || p['60d'] || p['30d'];
+  return (s && s.count >= 1) ? s.avg : null;
+}
+
+function _avgToReadable(avg) {
+  if (avg == null) return '—';
+  if (avg === 0) return 'Same day';
+  const totalSec = Math.round(avg * 86400);
+  const s   = totalSec % 60;
+  const totalMin = Math.floor(totalSec / 60);
+  const m   = totalMin % 60;
+  const h   = Math.floor(totalMin / 60);
+  if (h === 0 && m === 0) return `${s}s avg`;
+  if (h === 0) return s > 0 ? `${m}m ${s}s avg` : `${m}m avg`;
+  if (h < 24)  return m > 0 ? `${h}h ${m}m avg` : `${h}h avg`;
+  const d  = Math.floor(h / 24);
+  const rh = h % 24;
+  return rh > 0 ? `${d}d ${rh}h avg` : `${d}d avg`;
+}
+
+function _getAutoRanked(which) {
+  return Object.entries(counties)
+    .map(([fips, c]) => ({ fips, c, avg: _countyAvg(c) }))
+    .filter(x => x.avg !== null && x.c.status !== 'closed')
+    .sort((a, b) => which === 'fastest' ? a.avg - b.avg : b.avg - a.avg)
+    .slice(0, 10);
+}
+
+// Returns array of 10 entries: the effective auto county for each slot,
+// accounting for all current _slotFips overrides above each position.
+// Returns null for slots that have a manual override (auto doesn't apply).
+function _getEffectiveAutos(which) {
+  const fullList = Object.entries(counties)
+    .map(([fips, c]) => ({ fips, c, avg: _countyAvg(c) }))
+    .filter(x => x.avg !== null && x.c.status !== 'closed')
+    .sort((a, b) => which === 'fastest' ? a.avg - b.avg : b.avg - a.avg);
+
+  const usedFips = new Set();
+  const result = [];
+
+  for (let i = 0; i < 10; i++) {
+    const slot = _slotFips[`${which}-${i}`] || [];
+    const validSlot = slot.filter(f => fullList.find(e => e.fips === f) && !usedFips.has(f));
+
+    if (validSlot.length > 0) {
+      // Pinned: mark all as used, effective auto = null (slot is manual)
+      for (const f of validSlot) usedFips.add(f);
+      result.push(null);
+    } else {
+      // Auto: pick next unused county
+      const next = fullList.find(e => !usedFips.has(e.fips));
+      if (next) usedFips.add(next.fips);
+      result.push(next || null);
+    }
+  }
+
+  return result;
+}
+
+async function initMedalsTab() {
+  if (_medalInited && Object.keys(counties).length > 0) { _renderRankingTables(); return; }
+  document.getElementById('medals-loading').style.display = 'block';
+  document.getElementById('medals-form').style.display = 'none';
+
+  try {
+    const cfg = await fetch('/site-config.json').then(r => r.json());
+    const fo = cfg.fastest_overrides;
+    const so = cfg.slowest_overrides;
+    if (Array.isArray(fo) && fo.length === 10) _fastestOverrides = fo;
+    else if (Array.isArray(cfg.medal_overrides))
+      _fastestOverrides = cfg.medal_overrides.map(f => f ? [f] : []).concat(Array(7).fill(null).map(()=>[]));
+    if (Array.isArray(so) && so.length === 10) _slowestOverrides = so;
+  } catch(e) {}
+
+  // Seed slot state: normalise each slot to an array
+  function _toArr(v) {
+    if (!v) return [];
+    if (Array.isArray(v)) return v.filter(Boolean);
+    return [v]; // backward compat: single string
+  }
+  for (let i = 0; i < 10; i++) {
+    _slotFips[`fastest-${i}`] = _toArr(_fastestOverrides[i]);
+    _slotFips[`slowest-${i}`] = _toArr(_slowestOverrides[i]);
+  }
+
+  _medalInited = true;
+  document.getElementById('medals-loading').style.display = 'none';
+  document.getElementById('medals-form').style.display = 'block';
+  _renderRankingTables();
+}
+
+function _rankRow(which, i, autoEntry) {
+  const posLabel = i < 3 ? (which === 'fastest' ? MEDAL_EMOJI[i] : SLOW_EMOJI[i]) : `#${i+1}`;
+  const arr = _slotFips[`${which}-${i}`] || [];
+  const hasOverride = arr.length > 0;
+  let autoCell;
+  if (hasOverride) {
+    autoCell = '<span style="color:#bbb;font-style:italic;font-size:11px">manual</span>';
+  } else if (autoEntry) {
+    const autoLabel = `${autoEntry.c.name}, ${autoEntry.c.state} · ${_avgToReadable(autoEntry.avg)}`;
+    autoCell = `<span style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${autoLabel}">${autoLabel}</span>`;
+  } else {
+    autoCell = '<span style="color:#bbb">—</span>';
+  }
+  return `<tr id="mrow-${which}-${i}"${hasOverride ? ' class="mrow-overridden"' : ''}>
+    <td style="padding:6px 8px;font-size:13px;font-weight:700;color:#1a2b45;white-space:nowrap;width:36px">${posLabel}</td>
+    <td style="padding:6px 8px;font-size:12px;color:#555;max-width:130px">
+      ${autoCell}
+    </td>
+    <td style="padding:6px 6px;min-width:180px">
+      <div id="slot-pills-${which}-${i}" class="slot-pills">
+        ${arr.map(f => {
+          const lbl = _fipsToLabel(f);
+          return `<span class="slot-pill" title="${lbl}"><span>${lbl}</span><span class="slot-pill-x" onclick="_removePill('${which}',${i},'${f}')">\u2715</span></span>`;
+        }).join('')}
+        <button class="slot-add-btn" onclick="_openDropdown('${which}',${i},this)">+ Add</button>
+      </div>
+    </td>
+    <td style="padding:4px 6px;width:32px">
+      <button onclick="_clearRankSlot('${which}',${i})" title="Clear all"
+        style="padding:4px 8px;background:#f3f4f6;border:1px solid #ddd;border-radius:5px;cursor:pointer;font-size:12px">✕</button>
+    </td>
+  </tr>`;
+}
+
+function _renderRankingTables() {
+  const effectiveFastest = _getEffectiveAutos('fastest');
+  const effectiveSlowest = _getEffectiveAutos('slowest');
+  const slotsEl = document.getElementById('medal-slots');
+
+  slotsEl.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+      <div>
+        <div style="font-size:13px;font-weight:700;color:#1a2b45;margin-bottom:10px">🥇 Fastest 10</div>
+        <table style="width:100%;border-collapse:collapse;font-size:12px">
+          <thead><tr style="border-bottom:2px solid #e8eaed">
+            <th style="padding:4px 8px;text-align:left;font-size:11px;color:#888">#</th>
+            <th style="padding:4px 8px;text-align:left;font-size:11px;color:#888">Auto</th>
+            <th style="padding:4px 8px;text-align:left;font-size:11px;color:#888">Override</th>
+            <th></th>
+          </tr></thead>
+          <tbody>${effectiveFastest.map((e,i) => _rankRow('fastest',i,e)).join('')}</tbody>
+        </table>
+      </div>
+      <div>
+        <div style="font-size:13px;font-weight:700;color:#1a2b45;margin-bottom:10px">🐢 Slowest 10</div>
+        <table style="width:100%;border-collapse:collapse;font-size:12px">
+          <thead><tr style="padding:4px 8px;text-align:left;font-size:11px;color:#888"><th style="padding:4px 8px;text-align:left;font-size:11px;color:#888">#</th>
+            <th style="padding:4px 8px;text-align:left;font-size:11px;color:#888">Auto</th>
+            <th style="padding:4px 8px;text-align:left;font-size:11px;color:#888">Override</th>
+            <th></th>
+          </tr></thead>
+          <tbody>${effectiveSlowest.map((e,i) => _rankRow('slowest',i,e)).join('')}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+function _clearRankSlot(which, i) {
+  const key = `${which}-${i}`;
+  _slotFips[key] = [];
+  _renderRankingTables();
+}
+
+async function saveMedalOverrides() {
+  const fastestOv = Array.from({length:10}, (_,i) => _slotFips[`fastest-${i}`] || []);
+  const slowestOv = Array.from({length:10}, (_,i) => _slotFips[`slowest-${i}`] || []);
+  const statusEl = document.getElementById('medal-save-status');
+  statusEl.textContent = 'Saving…';
+  statusEl.style.color = '#555';
+
+  let cfg = {};
+  try { cfg = await fetch('/site-config.json').then(r => r.json()); } catch(e) {}
+  cfg.fastest_overrides = fastestOv;
+  cfg.slowest_overrides = slowestOv;
+  cfg.medal_overrides = fastestOv.slice(0, 3).map(a => (a && a[0]) || null); // backward compat
+
+  try {
+    const res = await fetch('/admin/site-config', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ password: token, config: cfg })
+    });
+    if (res.ok) {
+      _fastestOverrides = fastestOv;
+      _slowestOverrides = slowestOv;
+      statusEl.textContent = '✓ Saved!';
+      statusEl.style.color = '#155724';
+      setTimeout(() => statusEl.textContent = '', 3000);
+    } else {
+      statusEl.textContent = 'Error saving';
+      statusEl.style.color = '#cf4027';
+    }
+  } catch(e) {
+    statusEl.textContent = 'Network error';
+    statusEl.style.color = '#cf4027';
+  }
+}
+
+async function resetMedalOverrides() {
+  for (let i = 0; i < 10; i++) { _clearRankSlot('fastest', i); _clearRankSlot('slowest', i); }
+  _fastestOverrides = Array(10).fill(null).map(() => []);
+  _slowestOverrides = Array(10).fill(null).map(() => []);
+  await saveMedalOverrides();
+}
 
 // ── Auto-login ────────────────────────────────────────────────────────────
 if(token){

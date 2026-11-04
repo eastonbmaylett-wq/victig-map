@@ -1,9 +1,25 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Request
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request, BackgroundTasks
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
-import subprocess, shutil, os, hashlib, json, csv, io, sqlite3, datetime, asyncio
+import subprocess, shutil, os, hashlib, json, csv, io, sqlite3, datetime, asyncio, re, secrets, sys, tempfile
 import urllib.request as _urllib_req
 from pathlib import Path
+from closure_data import (
+    apply_closure_entries,
+    desc_docx_text,
+    extract_closure_source_date,
+    html_to_desc_text,
+    parse_desc_docx as parse_closure_docx,
+    parse_desc_html as parse_closure_html,
+    parse_desc_text as parse_closure_text,
+    validate_closure_source_date,
+)
+from public_data import (
+    scrub_public_json_file,
+    write_bytes_atomic,
+    write_public_json_atomic,
+)
+from refresh_guard import summarize_dataset, validate_freshness, validate_transition
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)  # disable API docs
 
@@ -11,7 +27,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 BASE = Path(__file__).parent
@@ -70,7 +86,8 @@ def _geoip_sync(ip: str) -> str:
         pass
     return ''
 
-def _log_event(request: Request, event: str, county_id=None, county=None, state=None):
+def _log_event(request: Request, event: str, county_id=None, county=None, state=None) -> int:
+    """Log an analytics event and return the row id."""
     try:
         ip = request.headers.get('x-forwarded-for', request.client.host).split(',')[0].strip()
         ua = request.headers.get('user-agent', '')[:200]
@@ -81,21 +98,21 @@ def _log_event(request: Request, event: str, county_id=None, county=None, state=
         con.commit()
         row_id = con.execute('SELECT last_insert_rowid()').fetchone()[0]
         con.close()
-        # Fire-and-forget geo lookup for visit/embed events with no state set
-        if event in ('visit', 'embed') and not state:
-            async def _enrich():
-                try:
-                    loop = asyncio.get_event_loop()
-                    loc = await loop.run_in_executor(None, _geoip_sync, ip)
-                    if loc:
-                        c = _analytics_conn()
-                        c.execute('UPDATE events SET state=? WHERE id=?', (loc, row_id))
-                        c.commit(); c.close()
-                except Exception:
-                    pass
-            asyncio.ensure_future(_enrich())
+        return row_id
     except Exception:
-        pass  # never break the map over analytics
+        return 0
+
+async def _geo_enrich_event(row_id: int, ip: str):
+    """Background geo enrichment for a logged event."""
+    try:
+        loop = asyncio.get_event_loop()
+        loc = await loop.run_in_executor(None, _geoip_sync, ip)
+        if loc and row_id:
+            c = _analytics_conn()
+            c.execute('UPDATE events SET state=? WHERE id=?', (loc, row_id))
+            c.commit(); c.close()
+    except Exception:
+        pass
 
 # ── Cache-bust version: hash of all static files combined
 import hashlib as _hashlib
@@ -116,6 +133,15 @@ try:
             _shutil.copy2(_src, _dst)
 except Exception:
     pass
+
+# Remove report-only private fields from existing volume data during startup.
+# Future refreshes are sanitized by process.py before their atomic write.
+try:
+    _removed_private_fields = scrub_public_json_file(DATA_FILE)
+    if _removed_private_fields:
+        print(f"Sanitized {_removed_private_fields} private fields from public county data")
+except Exception as _scrub_error:
+    raise RuntimeError("Refusing to serve unsanitized public county data") from _scrub_error
 PW_HASH          = "b3121997c76507dc7adcf3ca13ee60d519cbc3c72a176527e8ba575fc13f3406"
 
 # ── Security headers ──────────────────────────────────────────────────────
@@ -139,6 +165,35 @@ def check_auth(password: str):
     h = hashlib.sha256(password.encode()).hexdigest()
     if h != PW_HASH:
         raise HTTPException(status_code=401, detail="Invalid password")
+
+
+def check_automation_auth(request: Request):
+    """Require the high-entropy ingestion secret; never reuse the admin password."""
+    expected = os.environ.get("VICTIG_MAP_INGEST_TOKEN", "")
+    if not expected:
+        raise HTTPException(status_code=503, detail="Automated ingestion is disabled")
+    authorization = request.headers.get("authorization", "")
+    scheme, _, provided = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not provided or not secrets.compare_digest(provided, expected):
+        raise HTTPException(status_code=401, detail="Invalid ingestion token")
+
+
+_REFRESH_LOCK = asyncio.Lock()
+
+
+def _create_data_backup() -> tuple[str, bytes]:
+    payload = DATA_FILE.read_bytes()
+    digest = hashlib.sha256(payload).hexdigest()[:12]
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup_dir = DATA_DIR / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    backup = backup_dir / f"county-data-{stamp}-{digest}.json"
+    if not backup.exists():
+        write_bytes_atomic(backup, payload)
+    backups = sorted(backup_dir.glob("county-data-*.json"), reverse=True)
+    for expired in backups[14:]:
+        expired.unlink(missing_ok=True)
+    return backup.name, payload
 
 # ── Block any direct file access not explicitly allowed ───────────────────
 BLOCKED_EXTENSIONS = {".py", ".json", ".csv", ".txt", ".toml", ".env", ".sh"}
@@ -170,8 +225,10 @@ def _inject_version(html_path: Path) -> Response:
                     headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
 
 @app.get("/")
-def root(request: Request):
-    _log_event(request, 'visit')
+async def root(request: Request, background_tasks: BackgroundTasks):
+    ip = request.headers.get('x-forwarded-for', request.client.host).split(',')[0].strip()
+    row_id = _log_event(request, 'visit')
+    background_tasks.add_task(_geo_enrich_event, row_id, ip)
     return _inject_version(BASE / "index.html")
 
 @app.get("/county-data.json")
@@ -219,7 +276,8 @@ async def update_site_config(payload: dict):
     check_auth(payload.get("password", ""))
     config = payload.get("config", {})
     allowed_keys = {"title", "subtitle", "statusLabels", "legendNotes",
-                    "badgeLabel", "fastestTitle", "slowestTitle", "brandText"}
+                    "badgeLabel", "fastestTitle", "slowestTitle", "brandText",
+                    "medal_overrides", "fastest_overrides", "slowest_overrides"}
     safe = {k: v for k, v in config.items() if k in allowed_keys}
     with open(CONFIG_FILE, "w") as f:
         json.dump(safe, f, indent=2)
@@ -230,8 +288,10 @@ def admin_page():
     return _inject_version(BASE / "admin.html")
 
 @app.get("/embed")
-def embed_page(request: Request):
-    _log_event(request, 'embed')
+async def embed_page(request: Request, background_tasks: BackgroundTasks):
+    ip = request.headers.get('x-forwarded-for', request.client.host).split(',')[0].strip()
+    row_id = _log_event(request, 'embed')
+    background_tasks.add_task(_geo_enrich_event, row_id, ip)
     return _inject_version(BASE / "embed.html")
 
 
@@ -276,7 +336,7 @@ async def upload_csv(password: str, file: UploadFile = File(...)):
     check_auth(password)
     name = (file.filename or "").lower()
     raw = await file.read()
-    tmp = Path("/tmp/victig_upload.csv")
+    tmp = Path(tempfile.gettempdir()) / f"victig_upload-{secrets.token_hex(8)}.csv"
 
     if name.endswith(".xlsx") or name.endswith(".xlsm"):
         try:
@@ -321,7 +381,7 @@ async def upload_csv(password: str, file: UploadFile = File(...)):
             f.write(raw)
 
     result = subprocess.run(
-        ["python3", str(BASE / "process.py"), str(tmp)],
+        [sys.executable, str(BASE / "process.py"), str(tmp)],
         capture_output=True, text=True, cwd=str(BASE)
     )
     tmp.unlink(missing_ok=True)
@@ -329,6 +389,120 @@ async def upload_csv(password: str, file: UploadFile = File(...)):
         err = (result.stderr or result.stdout or "Unknown error")[:800]
         raise HTTPException(status_code=500, detail=err)
     return {"ok": True, "message": result.stdout.strip() or "Map data updated successfully"}
+
+
+def _run_tat_report(raw: bytes, filename: str) -> None:
+    suffix = Path(filename).suffix.lower()
+    if suffix == ".xls":
+        raise ValueError("Old .xls format is not supported; export .xlsx")
+    if suffix not in {".xlsx", ".xlsm", ".csv"}:
+        raise ValueError("TAT report must be .xlsx, .xlsm, or .csv")
+    if not raw:
+        raise ValueError("TAT report is empty")
+    if len(raw) > 100 * 1024 * 1024:
+        raise ValueError("TAT report exceeds the 100 MB limit")
+
+    temporary = Path(tempfile.gettempdir()) / f"victig-tat-refresh-{secrets.token_hex(8)}{suffix}"
+    write_bytes_atomic(temporary, raw)
+    try:
+        result = subprocess.run(
+            [sys.executable, str(BASE / "process.py"), str(temporary)],
+            capture_output=True,
+            text=True,
+            cwd=str(BASE),
+            timeout=180,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise ValueError("TAT processing exceeded three minutes") from error
+    finally:
+        temporary.unlink(missing_ok=True)
+    if result.returncode != 0:
+        diagnostic = (result.stderr or result.stdout or "unknown processor error")[-800:]
+        raise ValueError(f"TAT processor failed: {diagnostic}")
+
+
+@app.post("/automation/refresh")
+async def automation_refresh(
+    request: Request,
+    tat_file: UploadFile | None = File(default=None),
+    closures_file: UploadFile | None = File(default=None),
+):
+    """Transactionally apply a TAT report and/or authoritative closure document."""
+    check_automation_auth(request)
+    if tat_file is None and closures_file is None:
+        raise HTTPException(status_code=400, detail="Provide a TAT or closure file")
+
+    async with _REFRESH_LOCK:
+        backup_name, before_bytes = _create_data_backup()
+        before = json.loads(before_bytes)
+        closure_summary = None
+        try:
+            if tat_file is not None:
+                tat_raw = await tat_file.read()
+                _run_tat_report(tat_raw, tat_file.filename or "report.xlsx")
+
+            if closures_file is not None:
+                closure_name = (closures_file.filename or "").lower()
+                closure_raw = await closures_file.read()
+                if not closure_raw:
+                    raise ValueError("Closure document is empty")
+                if len(closure_raw) > 25 * 1024 * 1024:
+                    raise ValueError("Closure document exceeds the 25 MB limit")
+                if closure_name.endswith(".docx"):
+                    closure_text = desc_docx_text(closure_raw)
+                    closure_entries = parse_closure_docx(closure_raw)
+                elif closure_name.endswith((".html", ".htm")):
+                    closure_html = closure_raw.decode("utf-8-sig", errors="replace")
+                    closure_text = html_to_desc_text(closure_html)
+                    closure_entries = parse_closure_html(closure_html)
+                elif closure_name.endswith(".txt"):
+                    closure_text = closure_raw.decode("utf-8-sig", errors="replace")
+                    closure_entries = parse_closure_text(closure_text)
+                else:
+                    raise ValueError("Closure bulletin must be .docx, .html, .htm, or .txt")
+                if not closure_entries:
+                    raise ValueError("Closure document produced no usable entries")
+                closure_source_date = extract_closure_source_date(closure_text)
+                validate_closure_source_date(
+                    closure_source_date,
+                    previous_date=before.get("closureSourceDate"),
+                    max_age_days=int(
+                        os.environ.get("VICTIG_MAP_MAX_CLOSURE_AGE_DAYS", "14")
+                    ),
+                )
+                with DATA_FILE.open(encoding="utf-8") as handle:
+                    refreshed = json.load(handle)
+                closure_summary = apply_closure_entries(refreshed, closure_entries)
+                refreshed["closureSourceDate"] = closure_source_date.isoformat()
+                write_public_json_atomic(DATA_FILE, refreshed)
+
+            with DATA_FILE.open(encoding="utf-8") as handle:
+                after = json.load(handle)
+            before_summary, after_summary = validate_transition(before, after)
+            if tat_file is not None:
+                max_age_days = int(os.environ.get("VICTIG_MAP_MAX_DATA_AGE_DAYS", "3"))
+                validate_freshness(after, max_age_days=max_age_days)
+
+            safe_closure_summary = None
+            if closure_summary is not None:
+                safe_closure_summary = {
+                    key: value
+                    for key, value in closure_summary.items()
+                    if key != "skippedJurisdictions"
+                }
+            return {
+                "ok": True,
+                "backup": backup_name,
+                "before": before_summary,
+                "after": after_summary,
+                "closures": safe_closure_summary,
+            }
+        except HTTPException:
+            write_bytes_atomic(DATA_FILE, before_bytes)
+            raise
+        except Exception as error:
+            write_bytes_atomic(DATA_FILE, before_bytes)
+            raise HTTPException(status_code=400, detail=str(error)[:1000]) from error
 
 @app.post("/admin/preview-columns")
 async def preview_columns(password: str, file: UploadFile = File(...)):
@@ -517,70 +691,35 @@ async def upload_desc_doc(password: str, file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail='Upload a .docx Word document')
 
     try:
-        entries = parse_desc_docx(raw)
+        entries = parse_closure_docx(raw)
+        if not entries:
+            raise ValueError("Document produced no usable entries")
     except Exception as e:
         raise HTTPException(status_code=400, detail=f'Parse error: {e}')
 
-    with open(DATA_FILE) as f:
+    with open(DATA_FILE, encoding="utf-8") as f:
         data = json.load(f)
-    counties = data['counties']
+    summary = apply_closure_entries(data, entries)
+    write_public_json_atomic(DATA_FILE, data)
 
-    # Build reverse lookup: norm(state+name) -> fips
-    def norm(s): return re.sub(r'[^a-z]', '', s.lower())
-    lookup = {}
-    for fips, c in counties.items():
-        key = norm((c.get('state') or '') + (c.get('name') or ''))
-        lookup[key] = fips
-        lookup[norm(c.get('name') or '')] = fips
-
-    # Clear ALL existing descriptions on fresh doc import
-    # (new doc is authoritative — wipes manual entries too)
-    cleared = 0
-    for fips, c in counties.items():
-        if c.get('description') or c.get('_desc_doc'):
-            c['description'] = ''
-            c.pop('_desc_doc', None)
-            cleared += 1
-
-    # Apply new descriptions
-    updated, skipped = 0, []
-    for state_ab, county_name, desc in entries:
-        fips = None
-        if county_name:
-            key = norm(state_ab + county_name)
-            fips = lookup.get(key) or lookup.get(norm(county_name))
-        else:
-            # State-level: apply to all counties in state without a specific desc
-            for fp, c in counties.items():
-                if c.get('state') == state_ab and not c.get('description'):
-                    c['description'] = desc
-                    c['_desc_doc'] = True
-                    updated += 1
-            continue
-        if fips and fips in counties:
-            counties[fips]['description'] = desc
-            counties[fips]['_desc_doc'] = True
-            # Auto-detect status from description keywords
-            low = desc.lower()
-            if any(kw in low for kw in ('closed indefinitely','closed for','courthouse is closed',
-                                         'inaccessible','no access','shut down','closed due',
-                                         'operations ceased','closed until','closed effective',
-                                         'not yet resumed','have not resumed')):
-                counties[fips]['status'] = 'closed'
-            elif counties[fips].get('status') == 'ok':
-                counties[fips]['status'] = 'delay'
-            updated += 1
-        else:
-            skipped.append(f'{state_ab}-{county_name}')
-
-    with open(DATA_FILE, 'w') as f:
-        json.dump(data, f)
-
-    msg = f'Updated {updated} counties, cleared {cleared} old entries.'
-    if skipped:
-        msg += f' Unmatched ({len(skipped)}): {", ".join(skipped[:8])}'
-    return {'ok': True, 'updated': updated, 'cleared': cleared,
-            'skipped': len(skipped), 'message': msg}
+    msg = (
+        f"Updated {summary['updated']} counties, cleared "
+        f"{summary['cleared']} prior document entries."
+    )
+    if summary['skipped']:
+        examples = ", ".join(summary['skippedJurisdictions'][:8])
+        msg += f" Unmatched ({summary['skipped']}): {examples}"
+    if summary['manualPreserved']:
+        msg += f" Preserved {summary['manualPreserved']} manual overrides."
+    return {
+        'ok': True,
+        'updated': summary['updated'],
+        'closed': summary['closed'],
+        'cleared': summary['cleared'],
+        'skipped': summary['skipped'],
+        'manualPreserved': summary['manualPreserved'],
+        'message': msg,
+    }
 
 @app.post("/admin/upload-descriptions")
 async def upload_descriptions(password: str, file: UploadFile = File(...)):
@@ -713,7 +852,7 @@ async def update_state(payload: dict):
     return {"ok": True, "updated": updated}
 
 import time as _time
-_START_TIME = str(int(_time.time()))  # changes every container restart / deploy
+_START_TIME = os.environ.get("VICTIG_MAP_BUILD_ID") or str(int(_time.time()))
 
 @app.get("/api/version")
 def version():
@@ -744,23 +883,44 @@ async def get_analytics(password: str):
              "county_id":r[4],"county":r[5],"state":r[6]} for r in rows]
 
 @app.get("/api/analytics/summary")
-async def get_analytics_summary(password: str, exclude_ip: str = None):
+async def get_analytics_summary(password: str, exclude_ip: str = None, range: str = "all", exclude_slc: bool = False):
     check_auth(password)
     con = _analytics_conn()
     ex = exclude_ip or ''
-    total_visits   = con.execute("SELECT COUNT(*) FROM events WHERE event='visit' AND (? = '' OR ip != ?)", (ex, ex)).fetchone()[0]
-    unique_ips     = con.execute("SELECT COUNT(DISTINCT ip) FROM events WHERE event='visit' AND (? = '' OR ip != ?)", (ex, ex)).fetchone()[0]
-    today_visits   = con.execute("SELECT COUNT(*) FROM events WHERE event='visit' AND ts >= date('now') AND (? = '' OR ip != ?)", (ex, ex)).fetchone()[0]
-    top_counties   = con.execute("""
+    slc_filter = "AND (state IS NULL OR state NOT LIKE '%Salt Lake City%')" if exclude_slc else ""
+
+    # Date filter (all ranges use rolling windows to avoid UTC/local tz confusion)
+    range_filter = ""
+    if range == "today":
+        range_filter = "AND ts >= datetime('now', '-24 hours')"
+    elif range == "week":
+        range_filter = "AND ts >= datetime('now', '-7 days')"
+    elif range == "month":
+        range_filter = "AND ts >= datetime('now', '-30 days')"
+
+    def q(sql, params=()):
+        return con.execute(sql, params).fetchall()
+
+    total_visits = q(f"SELECT COUNT(*) FROM events WHERE event='visit' {range_filter} {slc_filter} AND (? = '' OR ip != ?)", (ex, ex))[0][0]
+    unique_ips   = q(f"SELECT COUNT(DISTINCT ip) FROM events WHERE event='visit' {range_filter} {slc_filter} AND (? = '' OR ip != ?)", (ex, ex))[0][0]
+    today_visits = q(f"SELECT COUNT(*) FROM events WHERE event='visit' AND ts >= datetime('now', '-24 hours') {slc_filter} AND (? = '' OR ip != ?)", (ex, ex))[0][0]
+
+    top_counties = q(f"""
         SELECT county, state, COUNT(*) as cnt FROM events
-        WHERE event='county_click' AND county IS NOT NULL AND (? = '' OR ip != ?)
+        WHERE event='click' AND county IS NOT NULL {range_filter} {slc_filter}
         GROUP BY county, state ORDER BY cnt DESC LIMIT 10
-    """, (ex, ex)).fetchall()
-    recent         = con.execute("""
+    """)
+    top_counties_excl = q(f"""
+        SELECT county, state, COUNT(*) as cnt FROM events
+        WHERE event='click' AND county IS NOT NULL {range_filter} {slc_filter} AND (? = '' OR ip != ?)
+        GROUP BY county, state ORDER BY cnt DESC LIMIT 10
+    """, (ex, ex))
+    recent = q(f"""
         SELECT ts, ip, ua, event, county, state FROM events
+        WHERE 1=1 {range_filter} {slc_filter}
         ORDER BY ts DESC LIMIT 200
-    """).fetchall()
-    visitors       = con.execute("""
+    """)
+    visitors = q(f"""
         SELECT ip,
                MIN(ts) as first_seen,
                MAX(ts) as last_seen,
@@ -769,27 +929,29 @@ async def get_analytics_summary(password: str, exclude_ip: str = None):
                MAX(ua) as ua,
                MAX(state) as location
         FROM events
-        WHERE ip IS NOT NULL AND (? = '' OR ip != ?)
+        WHERE ip IS NOT NULL {range_filter} {slc_filter} AND (? = '' OR ip != ?)
         GROUP BY ip
         ORDER BY last_seen DESC
         LIMIT 200
-    """, (ex, ex)).fetchall()
-    by_day         = con.execute("""
+    """, (ex, ex))
+    by_day = q(f"""
         SELECT substr(ts,1,10) as day, COUNT(*) as cnt
-        FROM events WHERE event='visit' AND (? = '' OR ip != ?)
+        FROM events WHERE event='visit' {range_filter} {slc_filter} AND (? = '' OR ip != ?)
         GROUP BY day ORDER BY day DESC LIMIT 30
-    """, (ex, ex)).fetchall()
-    top_states = con.execute("""
+    """, (ex, ex))
+    top_states = q(f"""
         SELECT state, COUNT(*) as cnt FROM events
-        WHERE event='visit' AND state IS NOT NULL AND state != '' AND (? = '' OR ip != ?)
+        WHERE event='visit' AND state IS NOT NULL AND state != '' {range_filter} {slc_filter} AND (? = '' OR ip != ?)
         GROUP BY state ORDER BY cnt DESC LIMIT 10
-    """, (ex, ex)).fetchall()
+    """, (ex, ex))
     con.close()
     return {
         "total_visits": total_visits,
         "unique_ips": unique_ips,
         "today_visits": today_visits,
+        "range": range,
         "top_counties": [{"county":r[0],"state":r[1],"clicks":r[2]} for r in top_counties],
+        "top_counties_excl": [{"county":r[0],"state":r[1],"clicks":r[2]} for r in top_counties_excl],
         "top_states": [{"state":r[0],"visits":r[1]} for r in top_states],
         "recent": [{"ts":r[0],"ip":r[1],"ua":r[2],"event":r[3],"county":r[4],"state":r[5]} for r in recent],
         "by_day": [{"day":r[0],"visits":r[1]} for r in by_day],
@@ -798,12 +960,13 @@ async def get_analytics_summary(password: str, exclude_ip: str = None):
     }
 
 @app.post("/api/analytics/backfill-geo")
-async def backfill_geo(password: str):
+async def backfill_geo(password: str, after_id: int = 0):
     """Enrich existing visit rows that have no state with IP geolocation."""
     check_auth(password)
     con = _analytics_conn()
     rows = con.execute(
-        "SELECT id, ip FROM events WHERE event IN ('visit','embed') AND (state IS NULL OR state='') AND ip IS NOT NULL"
+        "SELECT id, ip FROM events WHERE event IN ('visit','embed') AND (state IS NULL OR state='') AND ip IS NOT NULL AND id>? ORDER BY id LIMIT 10",
+        (after_id,),
     ).fetchall()
     con.close()
     enriched = 0
@@ -816,7 +979,15 @@ async def backfill_geo(password: str):
             c.commit(); c.close()
             enriched += 1
         await asyncio.sleep(0.05)  # stay under ip-api.com rate limit (45/min)
-    return {"enriched": enriched, "total": len(rows)}
+    next_id = rows[-1][0] if rows else after_id
+    con = _analytics_conn()
+    remaining = con.execute(
+        "SELECT COUNT(*) FROM events WHERE event IN ('visit','embed') AND (state IS NULL OR state='') AND ip IS NOT NULL AND id>?",
+        (next_id,),
+    ).fetchone()[0]
+    con.close()
+    return {"enriched": enriched, "total": len(rows), "next_after_id": next_id,
+            "has_more": remaining > 0}
 
 @app.get("/api/my-ip")
 async def my_ip(request: Request):
@@ -825,7 +996,7 @@ async def my_ip(request: Request):
 
 @app.get("/analytics")
 async def analytics_page():
-    return FileResponse(BASE / "analytics.html")
+    return _inject_version(BASE / "analytics.html")
 
 @app.get("/test")
 def test_page():
@@ -862,4 +1033,3 @@ async function run(){
 run();
 </script></body></html>"""
     return Response(content=html, media_type="text/html")
-

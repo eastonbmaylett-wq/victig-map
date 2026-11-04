@@ -11,6 +11,7 @@ import csv, json, io, re, sys, os
 from datetime import datetime
 from collections import defaultdict
 from pathlib import Path
+from public_data import write_public_json_atomic
 
 BASE     = Path(__file__).parent
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
@@ -103,9 +104,6 @@ COL_TAT      = COL_EXACT if COL_EXACT is not None else COL_SEARCH   # prefer exa
 COL_START    = col('start date/time')
 COL_COMPLETE = col('completion date/time')
 COL_SNAME    = col('search name')
-COL_CLIENT   = col('client name')
-COL_CAND     = col('candidate name')
-COL_FILE     = col('file #')
 
 # New pre-computed aggregate columns
 COL_UJUR     = col('unique jurisdiction')
@@ -180,10 +178,7 @@ for raw in raw_rows[1:]:
         comp_str = get(COL_COMPLETE) if COL_COMPLETE else ''
         latest[jur] = {
             'dt': dt, 'tat': tat, 'search': search,
-            'client':     get(COL_CLIENT),
-            'candidate':  get(COL_CAND) if COL_CAND is not None else '',
             'completion': comp_str,
-            'file_num':   get(COL_FILE),
         }
 
 if not rows:
@@ -242,13 +237,10 @@ for j, v in latest.items():
         'date':       v['dt'].strftime('%b %d, %Y %H:%M'),
         'search':     v['search'],
         'completion': v['completion'],
-        'client':     v['client'],
-        'candidate':  v.get('candidate',''),
-        'file_num':   v['file_num'],
     }
 
 # ── Parse Outliers sheet (if Excel with multiple sheets) ─────────────────
-# Maps jurisdiction -> list of {tat, reason, search, client}
+# Maps jurisdiction -> list of {tat, reason, search}
 outliers_by_jur = defaultdict(list)
 if suffix in ('.xlsx', '.xlsm'):
     try:
@@ -272,7 +264,6 @@ if suffix in ('.xlsx', '.xlsm'):
                         'tat':    tat,
                         'reason': reason,
                         'search': _g(r,'search name'),
-                        'client': _g(r,'client name'),
                     })
     except Exception as e:
         print(f'Outliers sheet skipped: {e}')
@@ -384,10 +375,28 @@ if existing_file.exists():
     with open(existing_file) as f:
         existing = json.load(f)
     for fips, c in existing.get('counties', {}).items():
-        if fips in county_db and c.get('_admin_override'):
-            county_db[fips]['status']          = c['status']
-            county_db[fips]['description']      = c['description']
-            county_db[fips]['_admin_override']  = True
+        if fips not in county_db:
+            continue
+        target = county_db[fips]
+        if c.get('_admin_override'):
+            target['status']          = c['status']
+            target['description']     = c['description']
+            target['_admin_override'] = True
+            if c.get('_overrides'):
+                target['_overrides'] = c['_overrides']
+        elif c.get('_desc_doc'):
+            # Preserve the most recently approved closure/delay document until a
+            # newer document is supplied. Capture the reconstructed base values
+            # so a removed closure can revert cleanly on the next document import.
+            target['_desc_doc_previous_status'] = c.get(
+                '_desc_doc_previous_status', target['status']
+            )
+            target['_desc_doc_previous_description'] = c.get(
+                '_desc_doc_previous_description', target['description']
+            )
+            target['status']      = c.get('status', target['status'])
+            target['description'] = c.get('description', target['description'])
+            target['_desc_doc']   = True
 
 # ── Write output ──────────────────────────────────────────────────────────
 out = {
@@ -396,8 +405,9 @@ out = {
     'stateAvg':    state_avg,   # top-level for easy frontend lookup
     'counties':    county_db,
 }
-with open(DATA_DIR / "county-data.json", 'w') as f:
-    json.dump(out, f)
+if existing_file.exists() and existing.get('closureSourceDate'):
+    out['closureSourceDate'] = existing['closureSourceDate']
+write_public_json_atomic(DATA_DIR / "county-data.json", out)
 
 matched_states = len(state_avg)
 print(f"Done. {len(sm_map)} counties matched | {len(set(list(period_stats.keys())+list(precomp.keys())))} unique jurisdictions | {matched_states} states with avg data. Max date: {max_date.date()}")

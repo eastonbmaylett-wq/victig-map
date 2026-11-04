@@ -30,210 +30,308 @@
 
 <!-- Admin UI -->
 <div id="admin-ui">
+
+  <!-- Header -->
   <div id="header">
-    <div>
+    <div style="display:flex;align-items:center;gap:10px">
       <img id="header-logo" src="/victig-logo-white.png" alt="Victig Background Checks">
       <div class="hdr-sub" id="data-date" style="margin-left:4px">Loading…</div>
     </div>
     <div id="header-right">
       <a href="/" target="_blank" style="color:rgba(255,255,255,.65);font-size:12px;text-decoration:none">↗ View public map</a>
-      <button onclick="toggleEmbedPanel()" id="embed-nav-btn" style="padding:4px 13px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);color:white;border-radius:5px;cursor:pointer;font-size:12px">🔗 Embed / Share</button>
       <button id="logout-btn" onclick="doLogout()">Sign Out</button>
     </div>
   </div>
 
-  <!-- Embed tab -->
-  <div id="embed-panel" style="display:none;padding:28px 32px;overflow-y:auto;flex:1">
-    <h2 style="font-size:16px;color:#1a2b45;margin-bottom:6px">Embed in TazWorks / InstaScreen</h2>
-    <p style="font-size:13px;color:#666;margin-bottom:24px">Choose how you want to surface the map. Copy the snippet and paste it into your TazWorks portal or any web page.</p>
+  <!-- Main: sidebar + content -->
+  <div id="admin-main">
 
-    <div style="margin-bottom:24px">
-      <div style="font-size:12px;font-weight:700;color:#1a2b45;margin-bottom:6px;text-transform:uppercase;letter-spacing:.4px">Option 1 — Direct Link (simplest)</div>
-      <p style="font-size:12px;color:#666;margin-bottom:8px">Add a button or hyperlink in TazWorks that opens the map in a new tab.</p>
-      <div style="display:flex;gap:8px;align-items:center">
-        <code id="link-url" style="flex:1;background:#f4f6f8;border:1px solid #ddd;border-radius:6px;padding:8px 12px;font-size:13px;display:block">https://victig-map-production.up.railway.app/</code>
-        <button onclick="copyEl('link-url')" style="padding:7px 14px;background:#1a2b45;color:white;border:none;border-radius:6px;cursor:pointer;font-size:12px;white-space:nowrap">Copy URL</button>
-      </div>
+    <!-- Sidebar -->
+    <div id="sidebar">
+      <button class="tab-btn active" data-tab="map" onclick="switchTab('map')">
+        <span class="tab-icon">🗺️</span>
+        <span class="tab-label">Map</span>
+      </button>
+      <button class="tab-btn" data-tab="import" onclick="switchTab('import')">
+        <span class="tab-icon">📥</span>
+        <span class="tab-label">Import</span>
+      </button>
+      <button class="tab-btn" data-tab="analytics" onclick="switchTab('analytics')">
+        <span class="tab-icon">📊</span>
+        <span class="tab-label">Analytics</span>
+      </button>
+      <button class="tab-btn" data-tab="embed" onclick="switchTab('embed')">
+        <span class="tab-icon">🔗</span>
+        <span class="tab-label">Embed</span>
+      </button>
+      <button class="tab-btn" data-tab="medals" onclick="switchTab('medals')">
+        <span class="tab-icon">🏅</span>
+        <span class="tab-label">Medals</span>
+      </button>
+      <button class="tab-btn" data-tab="preview" onclick="switchTab('preview')">
+        <span class="tab-icon">👁️</span>
+        <span class="tab-label">Preview</span>
+      </button>
     </div>
 
-    <div style="margin-bottom:24px">
-      <div style="font-size:12px;font-weight:700;color:#1a2b45;margin-bottom:6px;text-transform:uppercase;letter-spacing:.4px">Option 2 — Inline Iframe (recommended)</div>
-      <p style="font-size:12px;color:#666;margin-bottom:8px">Embed the map directly inside a TazWorks page. Clean, header-free version — just the map.</p>
-      <div style="margin-bottom:8px;display:flex;gap:6px;align-items:center">
-        <label style="font-size:12px;color:#555">Height:</label>
-        <select id="iframe-height" onchange="updateIframe()" style="padding:4px 8px;border-radius:5px;border:1px solid #ddd;font-size:12px">
-          <option value="500">500px (compact)</option>
-          <option value="650" selected>650px (standard)</option>
-          <option value="800">800px (tall)</option>
-          <option value="100vh">Full screen height</option>
-        </select>
-      </div>
-      <textarea id="iframe-code" readonly rows="4" onclick="this.select()" style="width:100%;font-family:monospace;font-size:12px;padding:10px 12px;border-radius:6px;border:1px solid #ddd;background:#f4f6f8;resize:none;line-height:1.5"></textarea>
-      <div style="display:flex;gap:8px;margin-top:8px">
-        <button onclick="copyEl('iframe-code')" style="padding:7px 16px;background:#1a2b45;color:white;border:none;border-radius:6px;cursor:pointer;font-size:12px">Copy Embed Code</button>
-        <button onclick="window.open('/embed','_blank')" style="padding:7px 16px;background:#f0f2f5;color:#333;border:none;border-radius:6px;cursor:pointer;font-size:12px">Preview Embed</button>
-        <span id="copy-confirm" style="font-size:12px;color:#155724"></span>
-      </div>
-    </div>
+    <!-- Tab content -->
+    <div id="tab-content">
 
-    <div style="margin-bottom:24px">
-      <div style="font-size:12px;font-weight:700;color:#1a2b45;margin-bottom:6px;text-transform:uppercase;letter-spacing:.4px">Option 3 — Clickable Banner Link</div>
-      <p style="font-size:12px;color:#666;margin-bottom:8px">A styled button you can drop into any HTML dashboard.</p>
-      <textarea id="banner-code" readonly rows="3" onclick="this.select()" style="width:100%;font-family:monospace;font-size:12px;padding:10px 12px;border-radius:6px;border:1px solid #ddd;background:#f4f6f8;resize:none;line-height:1.5"></textarea>
-      <button onclick="copyEl('banner-code')" style="margin-top:8px;padding:7px 16px;background:#1a2b45;color:white;border:none;border-radius:6px;cursor:pointer;font-size:12px">Copy Banner Code</button>
-    </div>
-
-    <div style="background:#fffbeb;border:1px solid #f0c040;border-radius:8px;padding:14px 16px;font-size:12px;color:#7a5c00">
-      <b>📌 Once you set up map.victig.com:</b> Replace <code>victig-map-production.up.railway.app</code> with <code>map.victig.com</code> in all snippets above. DNS setup: add a CNAME record <code>map → victig-map-production.up.railway.app</code> at your domain registrar.
-    </div>
-  </div>
-
-  <div id="body">
-    <!-- Left -->
-    <div id="left-panel">
-      <div id="import-section">
-        <h2>📥 Import Data</h2>
-        <div id="drop-zone" onclick="document.getElementById('file-input').click()"
-             ondragover="event.preventDefault();this.classList.add('drag-over')"
-             ondragleave="this.classList.remove('drag-over')"
-             ondrop="handleDrop(event)">
-          <div class="drop-idle">
-            <div class="icon">📂</div>
-            <strong>Drop file here or click to browse</strong>
-            <p>CSV, Excel (.xlsx), TSV — any spreadsheet</p>
-          </div>
-          <div class="drop-active">📥 Drop it!</div>
-        </div>
-        <div id="file-ready-banner">
-          <span class="file-icon">✅</span>
-          <span id="file-ready-name"></span>
-          <span id="file-ready-size" style="color:#888;margin-left:auto"></span>
-        </div>
-        <div id="col-preview" style="display:none;margin-top:8px;background:#f4f6f8;border-radius:6px;padding:8px 10px;font-size:11px"></div>
-        <div class="upload-hint">Export from IS/TazWorks going back <b>6 months</b> for full coverage (3 months minimum).</div>
-        <input type="file" id="file-input" accept=".csv,.xlsx,.xls,.tsv,.txt" onchange="handleFile(this.files[0])">
-        <div id="import-status"></div>
-        <button id="import-btn" onclick="doImport()">⬆ Upload & Update Map</button>
-      </div>
-
-      <div id="worddoc-import-section" style="padding:12px 16px;border-bottom:1px solid #f0f0f0;flex-shrink:0">
-        <h2 style="font-size:12px;font-weight:600;color:#1a2b45;margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px">📄 Import Court Delays Doc</h2>
-        <div id="doc-drop-zone" onclick="document.getElementById('doc-file-input').click()"
-             ondragover="event.preventDefault();this.classList.add('drag-over')"
-             ondragleave="this.classList.remove('drag-over')"
-             ondrop="handleDocDrop(event)"
-             style="border:2px dashed #d0d4da;border-radius:7px;padding:10px;text-align:center;cursor:pointer;background:#fafbfc;font-size:12px;transition:all .2s">
-          <div id="doc-drop-idle">📝 Drop the court delays .docx here</div>
-          <div id="doc-drop-active" style="display:none;font-weight:700;color:#1a2b45">📥 Drop it!</div>
-        </div>
-        <input type="file" id="doc-file-input" accept=".docx" style="display:none" onchange="handleDocFile(this.files[0])">
-        <div id="doc-ready-banner" style="display:none;background:#d4edda;border:1px solid #55ae5c;border-radius:5px;padding:6px 8px;margin-top:6px;font-size:11px;color:#155724"></div>
-        <div id="doc-status" style="font-size:11px;margin-top:6px;min-height:14px"></div>
-        <button id="doc-import-btn" onclick="doDocImport()" style="display:none;width:100%;margin-top:6px;padding:7px;background:#1a2b45;color:white;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:500">⬆ Upload Doc &amp; Update Descriptions</button>
-        <div style="font-size:10px;color:#aaa;margin-top:5px">Accepts the Victig court delays Word doc. Removes old descriptions when counties are removed from the doc. Summaries auto-generated for long text.</div>
-      </div>
-
-      <div id="desc-import-section" style="padding:12px 16px;border-bottom:1px solid #f0f0f0;flex-shrink:0">
-        <h2 style="font-size:12px;font-weight:600;color:#1a2b45;margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px">📝 Import Descriptions</h2>
-        <div id="desc-drop-zone" onclick="document.getElementById('desc-file-input').click()"
-             ondragover="event.preventDefault();this.classList.add('drag-over')"
-             ondragleave="this.classList.remove('drag-over')"
-             ondrop="handleDescDrop(event)"
-             style="border:2px dashed #d0d4da;border-radius:7px;padding:10px;text-align:center;cursor:pointer;background:#fafbfc;font-size:12px;transition:all .2s">
-          <div id="desc-drop-idle">📋 Drop descriptions CSV/Excel here</div>
-          <div id="desc-drop-active" style="display:none;font-weight:700;color:#1a2b45">📥 Drop it!</div>
-        </div>
-        <div id="desc-col-preview" style="display:none;margin-top:6px;background:#f4f6f8;border-radius:5px;padding:6px 8px;font-size:11px"></div>
-        <input type="file" id="desc-file-input" accept=".csv,.xlsx,.xls,.tsv,.txt" style="display:none" onchange="handleDescFile(this.files[0])">
-        <div id="desc-ready-banner" style="display:none;background:#d4edda;border:1px solid #55ae5c;border-radius:5px;padding:6px 8px;margin-top:6px;font-size:11px;color:#155724"></div>
-        <div id="desc-status" style="font-size:11px;margin-top:6px;min-height:14px"></div>
-        <button id="desc-import-btn" onclick="doDescImport()" style="display:none;width:100%;margin-top:6px;padding:7px;background:#1a2b45;color:white;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:500">⬆ Upload Descriptions</button>
-        <div style="font-size:10px;color:#aaa;margin-top:5px">CSV/Excel with <b>Jurisdiction</b> + <b>Description</b> columns. Optional <b>Status</b> column.</div>
-      </div>
-
-      <div id="list-section">
-        <div id="mode-tabs">
-          <button class="mode-tab active" id="tab-flagged" onclick="setMode('flagged')">🚩 Flagged (<span id="flagged-count">0</span>)</button>
-          <button class="mode-tab" id="tab-all" onclick="setMode('all')">🔍 All</button>
-          <button class="mode-tab" id="tab-state" onclick="setMode('state')">🇺🇸 States</button>
-        </div>
-        <input type="text" id="list-search" placeholder="Search counties…" oninput="filterList()">
-        <div id="list-meta"></div>
-        <div id="county-list"></div>
-      </div>
-    </div>
-
-    <!-- Right: map + edit panel -->
-    <div id="right-panel">
-      <div id="map-area">
-        <svg id="admin-map-svg"></svg>
-        <div id="map-hint">Click any county to edit its status</div>
-        <div id="map-legend">
-          <div class="leg-row"><div class="leg-sw" style="background:#55ae5c"></div> No Delay</div>
-          <div class="leg-row"><div class="leg-sw" style="background:#dea922"></div> Delay</div>
-          <div class="leg-row"><div class="leg-sw" style="background:#de7612"></div> Avg TAT &gt;14d</div>
-          <div class="leg-row"><div class="leg-sw" style="background:#cf4027"></div> Significant</div>
-          <div class="leg-row"><div class="leg-sw" style="background:#d4d8dd"></div> No Data</div>
-        </div>
-      </div>
-
-      <div id="edit-panel">
-        <div id="edit-panel-inner">
-          <div id="edit-left">
-            <div class="ep-title" id="edit-title"></div>
-            <div class="ep-sub" id="edit-sub"></div>
-            <label class="form-label">Status</label>
-            <select id="edit-status">
-              <option value="ok">✅ No Delay</option>
-              <option value="delay">🟡 Delay</option>
-              <option value="high_tat">🟠 Avg TAT &gt;14 Days</option>
-              <option value="significant">🔴 Significant Delay</option>
-            </select>
-          </div>
-          <div id="edit-right">
-            <label class="form-label">Description / Notes</label>
-            <textarea id="edit-desc" placeholder="Explain the delay, expected resolution…"></textarea>
-            <div class="form-hint">Shown publicly when someone clicks this county.</div>
-          </div>
-        </div>
-
-        <!-- TAT overrides -->
-        <div style="border-top:1px solid #f0f0f0;padding-top:12px;margin-top:4px">
-          <div style="font-size:11px;font-weight:700;color:#1a2b45;margin-bottom:8px;text-transform:uppercase;letter-spacing:.3px">✏️ Override Popup Stats <span style="font-weight:400;color:#aaa">(leave blank to use calculated values)</span></div>
-          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:10px">
-            <div>
-              <label class="form-label">Avg TAT</label>
-              <input id="ov-avg" type="text" placeholder="e.g. 2h 15m or 1.5" style="width:100%;padding:5px 8px;border:1.5px solid #ddd;border-radius:5px;font-size:12px">
-            </div>
-            <div>
-              <label class="form-label">Max TAT</label>
-              <input id="ov-max" type="text" placeholder="e.g. 14d or 336h" style="width:100%;padding:5px 8px;border:1.5px solid #ddd;border-radius:5px;font-size:12px">
-            </div>
-            <div>
-              <label class="form-label">Min TAT</label>
-              <input id="ov-min" type="text" placeholder="e.g. 4h 30m" style="width:100%;padding:5px 8px;border:1.5px solid #ddd;border-radius:5px;font-size:12px">
+      <!-- MAP TAB -->
+      <div id="tab-map" class="tab-panel">
+        <div id="body">
+          <!-- Left: county list -->
+          <div id="left-panel">
+            <div id="list-section">
+              <div id="mode-tabs">
+                <button class="mode-tab active" id="tab-flagged" onclick="setMode('flagged')">🚩 Flagged (<span id="flagged-count">0</span>)</button>
+                <button class="mode-tab" id="tab-all" onclick="setMode('all')">🔍 All</button>
+                <button class="mode-tab" id="tab-state" onclick="setMode('state')">🇺🇸 States</button>
+              </div>
+              <input type="text" id="list-search" placeholder="Search counties…" oninput="filterList()">
+              <div id="list-meta"></div>
+              <div id="county-list"></div>
             </div>
           </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-            <div>
-              <label class="form-label">Most Recent TAT</label>
-              <input id="ov-latest-tat" type="text" placeholder="e.g. 3h 20m" style="width:100%;padding:5px 8px;border:1.5px solid #ddd;border-radius:5px;font-size:12px">
+
+          <!-- Right: map + edit panel -->
+          <div id="right-panel">
+            <div id="map-area">
+              <svg id="admin-map-svg"></svg>
+              <div id="map-hint">Click any county to edit its status</div>
+              <div id="map-legend">
+                <div class="leg-row"><div class="leg-sw" style="background:#55ae5c"></div> No Delay</div>
+                <div class="leg-row"><div class="leg-sw" style="background:#dea922"></div> Delay</div>
+                <div class="leg-row"><div class="leg-sw" style="background:#de7612"></div> Avg TAT &gt;14d</div>
+                <div class="leg-row"><div class="leg-sw" style="background:#cf4027"></div> Significant</div>
+                <div class="leg-row"><div class="leg-sw" style="background:#d4d8dd"></div> No Data</div>
+              </div>
             </div>
-            <div>
-              <label class="form-label">Most Recent Date</label>
-              <input id="ov-latest-date" type="text" placeholder="e.g. May 3, 2026" style="width:100%;padding:5px 8px;border:1.5px solid #ddd;border-radius:5px;font-size:12px">
+            <div id="edit-panel">
+              <div id="edit-panel-inner">
+                <div id="edit-left">
+                  <div class="ep-title" id="edit-title"></div>
+                  <div class="ep-sub" id="edit-sub"></div>
+                  <label class="form-label">Status</label>
+                  <select id="edit-status">
+                    <option value="ok">✅ No Delay</option>
+                    <option value="delay">🟡 Delay</option>
+                    <option value="high_tat">🟠 Avg TAT &gt;14 Days</option>
+                    <option value="significant">🔴 Significant Delay</option>
+                  </select>
+                </div>
+                <div id="edit-right">
+                  <label class="form-label">Description / Notes</label>
+                  <textarea id="edit-desc" placeholder="Explain the delay, expected resolution…"></textarea>
+                  <div class="form-hint">Shown publicly when someone clicks this county.</div>
+                </div>
+              </div>
+              <!-- TAT overrides -->
+              <div style="border-top:1px solid #f0f0f0;padding-top:12px;margin-top:4px">
+                <div style="font-size:11px;font-weight:700;color:#1a2b45;margin-bottom:8px;text-transform:uppercase;letter-spacing:.3px">✏️ Override Popup Stats <span style="font-weight:400;color:#aaa">(leave blank to use calculated values)</span></div>
+                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:10px">
+                  <div>
+                    <label class="form-label">Avg TAT</label>
+                    <input id="ov-avg" type="text" placeholder="e.g. 2h 15m or 1.5" style="width:100%;padding:5px 8px;border:1.5px solid #ddd;border-radius:5px;font-size:12px">
+                  </div>
+                  <div>
+                    <label class="form-label">Max TAT</label>
+                    <input id="ov-max" type="text" placeholder="e.g. 14d or 336h" style="width:100%;padding:5px 8px;border:1.5px solid #ddd;border-radius:5px;font-size:12px">
+                  </div>
+                  <div>
+                    <label class="form-label">Min TAT</label>
+                    <input id="ov-min" type="text" placeholder="e.g. 4h 30m" style="width:100%;padding:5px 8px;border:1.5px solid #ddd;border-radius:5px;font-size:12px">
+                  </div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                  <div>
+                    <label class="form-label">Most Recent TAT</label>
+                    <input id="ov-latest-tat" type="text" placeholder="e.g. 3h 20m" style="width:100%;padding:5px 8px;border:1.5px solid #ddd;border-radius:5px;font-size:12px">
+                  </div>
+                  <div>
+                    <label class="form-label">Most Recent Date</label>
+                    <input id="ov-latest-date" type="text" placeholder="e.g. May 3, 2026" style="width:100%;padding:5px 8px;border:1.5px solid #ddd;border-radius:5px;font-size:12px">
+                  </div>
+                </div>
+              </div>
+              <div id="edit-actions">
+                <button id="save-btn" onclick="saveCounty()">Save Changes</button>
+                <button id="close-edit" onclick="closeEdit()">Cancel</button>
+                <span id="save-status"></span>
+              </div>
             </div>
           </div>
         </div>
+      </div>
 
-        <div id="edit-actions">
-          <button id="save-btn" onclick="saveCounty()">Save Changes</button>
-          <button id="close-edit" onclick="closeEdit()">Cancel</button>
-          <span id="save-status"></span>
+      <!-- IMPORT TAB -->
+      <div id="tab-import" class="tab-panel" style="display:none;overflow-y:auto;background:white">
+        <div style="max-width:700px;margin:0 auto;padding:28px 32px;width:100%">
+          <h2 style="font-size:18px;font-weight:700;color:#1a2b45;margin-bottom:24px">📥 Import Data</h2>
+
+          <!-- TAT CSV -->
+          <div style="background:#f8f9fb;border-radius:10px;border:1px solid #e8eaed;padding:20px;margin-bottom:20px">
+            <h3 style="font-size:13px;font-weight:700;color:#1a2b45;margin-bottom:4px;text-transform:uppercase;letter-spacing:.4px">TAT Search Data (CSV / Excel)</h3>
+            <p style="font-size:12px;color:#888;margin-bottom:12px">Export from IS/TazWorks going back <b>6 months</b> for full coverage (3 months minimum).</p>
+            <div id="drop-zone" onclick="document.getElementById('file-input').click()"
+                 ondragover="event.preventDefault();this.classList.add('drag-over')"
+                 ondragleave="this.classList.remove('drag-over')"
+                 ondrop="handleDrop(event)">
+              <div class="drop-idle">
+                <div class="icon">📂</div>
+                <strong>Drop file here or click to browse</strong>
+                <p>CSV, Excel (.xlsx), TSV — any spreadsheet</p>
+              </div>
+              <div class="drop-active">📥 Drop it!</div>
+            </div>
+            <div id="file-ready-banner">
+              <span class="file-icon">✅</span>
+              <span id="file-ready-name"></span>
+              <span id="file-ready-size" style="color:#888;margin-left:auto"></span>
+            </div>
+            <div id="col-preview" style="display:none;margin-top:8px;background:#f4f6f8;border-radius:6px;padding:8px 10px;font-size:11px"></div>
+            <input type="file" id="file-input" accept=".csv,.xlsx,.xls,.tsv,.txt" onchange="handleFile(this.files[0])">
+            <div id="import-status"></div>
+            <button id="import-btn" onclick="doImport()">⬆ Upload & Update Map</button>
+          </div>
+
+          <!-- Court delays doc -->
+          <div style="background:#f8f9fb;border-radius:10px;border:1px solid #e8eaed;padding:20px;margin-bottom:20px">
+            <h3 style="font-size:13px;font-weight:700;color:#1a2b45;margin-bottom:4px;text-transform:uppercase;letter-spacing:.4px">Court Delays Doc (.docx)</h3>
+            <p style="font-size:12px;color:#888;margin-bottom:12px">Accepts the Victig court delays Word doc. Removes old descriptions when counties are removed. Summaries auto-generated for long text.</p>
+            <div id="doc-drop-zone" onclick="document.getElementById('doc-file-input').click()"
+                 ondragover="event.preventDefault();this.classList.add('drag-over')"
+                 ondragleave="this.classList.remove('drag-over')"
+                 ondrop="handleDocDrop(event)"
+                 style="border:2px dashed #d0d4da;border-radius:7px;padding:14px;text-align:center;cursor:pointer;background:#fafbfc;font-size:12px;transition:all .2s">
+              <div id="doc-drop-idle">📝 Drop the court delays .docx here</div>
+              <div id="doc-drop-active" style="display:none;font-weight:700;color:#1a2b45">📥 Drop it!</div>
+            </div>
+            <input type="file" id="doc-file-input" accept=".docx" style="display:none" onchange="handleDocFile(this.files[0])">
+            <div id="doc-ready-banner" style="display:none;background:#d4edda;border:1px solid #55ae5c;border-radius:5px;padding:6px 8px;margin-top:8px;font-size:11px;color:#155724"></div>
+            <div id="doc-status" style="font-size:11px;margin-top:6px;min-height:14px"></div>
+            <button id="doc-import-btn" onclick="doDocImport()" style="display:none;width:100%;margin-top:8px;padding:8px;background:#1a2b45;color:white;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:500">⬆ Upload Doc & Update Descriptions</button>
+          </div>
+
+          <!-- Descriptions CSV -->
+          <div style="background:#f8f9fb;border-radius:10px;border:1px solid #e8eaed;padding:20px">
+            <h3 style="font-size:13px;font-weight:700;color:#1a2b45;margin-bottom:4px;text-transform:uppercase;letter-spacing:.4px">Descriptions (CSV / Excel)</h3>
+            <p style="font-size:12px;color:#888;margin-bottom:12px">CSV/Excel with <b>Jurisdiction</b> + <b>Description</b> columns. Optional <b>Status</b> column.</p>
+            <div id="desc-drop-zone" onclick="document.getElementById('desc-file-input').click()"
+                 ondragover="event.preventDefault();this.classList.add('drag-over')"
+                 ondragleave="this.classList.remove('drag-over')"
+                 ondrop="handleDescDrop(event)"
+                 style="border:2px dashed #d0d4da;border-radius:7px;padding:14px;text-align:center;cursor:pointer;background:#fafbfc;font-size:12px;transition:all .2s">
+              <div id="desc-drop-idle">📋 Drop descriptions CSV/Excel here</div>
+              <div id="desc-drop-active" style="display:none;font-weight:700;color:#1a2b45">📥 Drop it!</div>
+            </div>
+            <div id="desc-col-preview" style="display:none;margin-top:8px;background:#f4f6f8;border-radius:5px;padding:6px 8px;font-size:11px"></div>
+            <input type="file" id="desc-file-input" accept=".csv,.xlsx,.xls,.tsv,.txt" style="display:none" onchange="handleDescFile(this.files[0])">
+            <div id="desc-ready-banner" style="display:none;background:#d4edda;border:1px solid #55ae5c;border-radius:5px;padding:6px 8px;margin-top:8px;font-size:11px;color:#155724"></div>
+            <div id="desc-status" style="font-size:11px;margin-top:6px;min-height:14px"></div>
+            <button id="desc-import-btn" onclick="doDescImport()" style="display:none;width:100%;margin-top:8px;padding:8px;background:#1a2b45;color:white;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:500">⬆ Upload Descriptions</button>
+          </div>
         </div>
       </div>
-    </div>
-  </div>
+
+      <!-- ANALYTICS TAB -->
+      <div id="tab-analytics" class="tab-panel" style="display:none;overflow-y:auto;background:#f4f6f9"></div>
+
+      <!-- PREVIEW TAB -->
+      <div id="tab-preview" class="tab-panel" style="display:none">
+        <iframe id="preview-iframe" src="" style="width:100%;flex:1;border:none"></iframe>
+      </div>
+
+      <!-- MEDALS TAB -->
+      <div id="tab-medals" class="tab-panel" style="display:none;overflow-y:auto;background:white">
+        <div style="max-width:960px;margin:0 auto;padding:28px 32px;width:100%">
+          <h2 style="font-size:18px;font-weight:700;color:#1a2b45;margin-bottom:12px">🏅 Rankings Override</h2>
+
+          <!-- How it works -->
+          <div style="background:#f0f4ff;border:1px solid #c7d7f5;border-radius:10px;padding:16px 20px;margin-bottom:24px">
+            <div style="font-size:12px;font-weight:700;color:#1a2b45;margin-bottom:10px;text-transform:uppercase;letter-spacing:.4px">ℹ️ How this works</div>
+            <div style="font-size:12px;color:#444;line-height:1.8;display:flex;flex-direction:column;gap:6px">
+              <div>📊 <strong>Auto column</strong> shows what the map currently displays — counties ranked by average TAT from your last upload.</div>
+              <div>📌 <strong>Override column</strong> lets you pin a specific county to that position. Leave it empty and the auto rank is used.</div>
+              <div>➕ <strong>+ Add</strong> opens a search dropdown — find a county and click it to pin it to that slot. The county appears as a dark pill.</div>
+              <div>🥇🥇 <strong>Ties</strong> — if two counties tie for the same position, click <strong>+ Add</strong> a second time on the same row to add another. Both get the same medal on the map.</div>
+              <div>✕ Click the <strong>✕ on a pill</strong> to remove just that county. Click the <strong>✕ button at the end of the row</strong> to clear the whole slot back to auto.</div>
+              <div>💾 <strong>Save</strong> when you’re done — changes go live on the public map instantly.</div>
+            </div>
+          </div>
+
+          <div id="medals-loading" style="font-size:13px;color:#888;padding:16px 0">Loading county data…</div>
+
+          <div id="medals-form" style="display:none">
+            <div id="medal-slots"></div>
+
+            <div style="margin-top:20px;display:flex;gap:10px;align-items:center">
+              <button onclick="saveMedalOverrides()" style="padding:9px 22px;background:#1a2b45;color:white;border:none;border-radius:7px;cursor:pointer;font-size:13px;font-weight:600">💾 Save Medal Overrides</button>
+              <button onclick="resetMedalOverrides()" style="padding:9px 16px;background:#f3f4f6;color:#555;border:1px solid #ddd;border-radius:7px;cursor:pointer;font-size:13px">↺ Reset All to Auto</button>
+              <span id="medal-save-status" style="font-size:12px;color:#155724"></span>
+            </div>
+
+
+          </div>
+        </div>
+      </div>
+
+      <!-- EMBED TAB -->
+      <div id="tab-embed" class="tab-panel" style="display:none;overflow-y:auto;background:white">
+        <div style="max-width:700px;margin:0 auto;padding:28px 32px;width:100%">
+          <h2 style="font-size:18px;font-weight:700;color:#1a2b45;margin-bottom:6px">🔗 Embed / Share</h2>
+          <p style="font-size:13px;color:#666;margin-bottom:24px">Choose how you want to surface the map. Copy the snippet and paste it into your TazWorks portal or any web page.</p>
+
+          <div style="background:#f8f9fb;border-radius:10px;border:1px solid #e8eaed;padding:20px;margin-bottom:20px">
+            <div style="font-size:12px;font-weight:700;color:#1a2b45;margin-bottom:6px;text-transform:uppercase;letter-spacing:.4px">Option 1 — Direct Link (simplest)</div>
+            <p style="font-size:12px;color:#666;margin-bottom:8px">Add a button or hyperlink in TazWorks that opens the map in a new tab.</p>
+            <div style="display:flex;gap:8px;align-items:center">
+              <code id="link-url" style="flex:1;background:#f4f6f8;border:1px solid #ddd;border-radius:6px;padding:8px 12px;font-size:13px;display:block">https://precious-dolphin-3f8f85.netlify.app/</code>
+              <button onclick="copyEl('link-url')" style="padding:7px 14px;background:#1a2b45;color:white;border:none;border-radius:6px;cursor:pointer;font-size:12px;white-space:nowrap">Copy URL</button>
+            </div>
+          </div>
+
+          <div style="background:#f8f9fb;border-radius:10px;border:1px solid #e8eaed;padding:20px;margin-bottom:20px">
+            <div style="font-size:12px;font-weight:700;color:#1a2b45;margin-bottom:6px;text-transform:uppercase;letter-spacing:.4px">Option 2 — Inline Iframe (recommended)</div>
+            <p style="font-size:12px;color:#666;margin-bottom:8px">Embed the map directly inside a TazWorks page. Clean, header-free version — just the map.</p>
+            <div style="margin-bottom:8px;display:flex;gap:6px;align-items:center">
+              <label style="font-size:12px;color:#555">Height:</label>
+              <select id="iframe-height" onchange="updateIframe()" style="padding:4px 8px;border-radius:5px;border:1px solid #ddd;font-size:12px">
+                <option value="500">500px (compact)</option>
+                <option value="650" selected>650px (standard)</option>
+                <option value="800">800px (tall)</option>
+                <option value="100vh">Full screen height</option>
+              </select>
+            </div>
+            <textarea id="iframe-code" readonly rows="4" onclick="this.select()" style="width:100%;font-family:monospace;font-size:12px;padding:10px 12px;border-radius:6px;border:1px solid #ddd;background:#f4f6f8;resize:none;line-height:1.5"></textarea>
+            <div style="display:flex;gap:8px;margin-top:8px">
+              <button onclick="copyEl('iframe-code')" style="padding:7px 16px;background:#1a2b45;color:white;border:none;border-radius:6px;cursor:pointer;font-size:12px">Copy Embed Code</button>
+              <button onclick="window.open('/embed','_blank')" style="padding:7px 16px;background:#f0f2f5;color:#333;border:none;border-radius:6px;cursor:pointer;font-size:12px">Preview Embed</button>
+              <span id="copy-confirm" style="font-size:12px;color:#155724"></span>
+            </div>
+          </div>
+
+          <div style="background:#f8f9fb;border-radius:10px;border:1px solid #e8eaed;padding:20px;margin-bottom:20px">
+            <div style="font-size:12px;font-weight:700;color:#1a2b45;margin-bottom:6px;text-transform:uppercase;letter-spacing:.4px">Option 3 — Clickable Banner Link</div>
+            <p style="font-size:12px;color:#666;margin-bottom:8px">A styled button you can drop into any HTML dashboard.</p>
+            <textarea id="banner-code" readonly rows="3" onclick="this.select()" style="width:100%;font-family:monospace;font-size:12px;padding:10px 12px;border-radius:6px;border:1px solid #ddd;background:#f4f6f8;resize:none;line-height:1.5"></textarea>
+            <button onclick="copyEl('banner-code')" style="margin-top:8px;padding:7px 16px;background:#1a2b45;color:white;border:none;border-radius:6px;cursor:pointer;font-size:12px">Copy Banner Code</button>
+          </div>
+
+          <div style="background:#fffbeb;border:1px solid #f0c040;border-radius:8px;padding:14px 16px;font-size:12px;color:#7a5c00">
+            The links and embed snippets above use this map’s current website address.
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /tab-content -->
+  </div><!-- /admin-main -->
+</div><!-- /admin-ui -->
+
+<!-- Shared county dropdown -->
+<div id="county-dropdown">
+  <div class="cd-search"><input id="cd-search-input" type="text" placeholder="Search counties…" autocomplete="off"></div>
+  <div class="cd-list" id="cd-list"></div>
 </div>
 
 <script src="/static/admin.js"></script>
