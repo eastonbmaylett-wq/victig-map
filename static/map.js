@@ -8,7 +8,7 @@ const STATUS = {
   high_tat:    {fill:'#de7612',label:'Avg TAT >14 Days', badge:'#ffe5cc',text:'#7a3600'},
   significant: {fill:'#cf4027',label:'Significant Delay',badge:'#f8d7da',text:'#721c24'},
   closed:      {fill:'#7b2d8b',label:'Closed / No Access',badge:'#f3d9f8',text:'#5a1a6b'},
-  no_data:     {fill:'#55ae5c',label:'No Data',          badge:'#f0f0f0',text:'#888'},
+  no_data:     {fill:'#c8ced4',label:'No Data',          badge:'#f0f0f0',text:'#888'},
 };
 
 // Gradient: green→yellow→orange→red
@@ -171,9 +171,8 @@ async function init(){
   }
 
   const dateStr = data.maxDate ? `Data through ${data.maxDate}` : '';
-  document.getElementById('data-date').textContent = dateStr;
-
   drawMap(topo);
+  setStatus(dateStr);
   updateBadge();
   buildPanels();
   buildSearchIndex();
@@ -194,7 +193,8 @@ function drawMap(topo){
   const stateMesh   = topojson.mesh(topo, topo.objects.states, (a,b)=>a!==b);
 
   // Exclude Pacific territories (GU/AS/MP) from fitSize — they break Albers USA projection
-  const fitFeatures = {...allCounties, features: allCounties.features.filter(f=>!String(f.id).match(/^(60|66|69)/)) };
+  const mainland = allCounties.features.filter(f=>!String(f.id).match(/^(60|66|69|72|78)/));
+  const fitFeatures = {...allCounties, features: mainland};
   // Offset center left to account for right-side panels; add vertical padding for breathing room
   const proj = d3.geoAlbersUsa().fitExtent([[20, 40], [W - 180, H - 30]], fitFeatures);
   const path = d3.geoPath().projection(proj);
@@ -205,8 +205,10 @@ function drawMap(topo){
 
   // Counties
   gSel.append('g').selectAll('path')
-    .data(allCounties.features).join('path')
+    .data(mainland).join('path')
     .attr('class','county')
+    .attr('data-fips', d => d.id)
+    .attr('aria-label', d => countyLabel(counties[d.id]))
     .attr('d', path)
     .attr('fill', d => getFill(d.id))
     .attr('opacity', d => dimmed(d.id) ? 0.25 : 1)
@@ -246,56 +248,51 @@ function drawMap(topo){
   document.getElementById('z-out').onclick   = ()=> svgSel.transition().call(svgZoom.scaleBy,0.625);
   document.getElementById('z-reset').onclick = ()=> svgSel.transition().call(svgZoom.transform,d3.zoomIdentity);
 
-  // ── Puerto Rico inset — fixed HTML overlay, never moves with map ───────────────────
-  buildPRInset(topo, W, H);
+  buildTerritoryInsets(allCounties.features);
 }
 
-function buildPRInset(topo, W, H){
-  const wrap = document.getElementById('map-wrap');
-  document.getElementById('pr-inset-div')?.remove();
+function countyLabel(c){
+  if (!c) return '';
+  const id = c.fips || '';
+  if ((c.state === 'VA' && Number(id.slice(2)) >= 500) || ['24510','29510'].includes(id))
+    return `${c.name} city, ${c.state}`;
+  if (c.state === 'NV' && id === '32510') return `${c.name}, ${c.state}`;
+  if (['AK','AS','GU','MP','PR','VI','DC'].includes(c.state)) return `${c.name}, ${c.state}`;
+  return `${c.name} ${c.state === 'LA' ? 'Parish' : 'County'}, ${c.state}`;
+}
 
-  const PW = Math.min(180, Math.round(W * 0.10));
-  const PH = Math.round(PW * 0.52);
-  const div = document.createElement('div');
-  div.id = 'pr-inset-div';
-  Object.assign(div.style, {
-    position:'absolute', bottom:'12px', right:'200px',
-    width: PW+'px', height: PH+'px',
-    background:'white', border:'1px solid #bbb', borderRadius:'4px',
-    boxShadow:'0 1px 6px rgba(0,0,0,.1)', overflow:'hidden', pointerEvents:'auto',
-    zIndex:'60'
-  });
-  wrap.appendChild(div);
-
-  const lbl = document.createElement('div');
-  lbl.textContent = 'PUERTO RICO';
-  Object.assign(lbl.style, {
-    position:'absolute', top:'3px', left:'4px',
-    fontSize:'7px', fontWeight:'700', color:'#999',
-    fontFamily:'sans-serif', pointerEvents:'none', zIndex:'1'
-  });
-  div.appendChild(lbl);
-
-  const prFeatures = topojson.feature(topo, {
-    type:'GeometryCollection',
-    geometries: topo.objects.counties.geometries.filter(g=>String(g.id).startsWith('72'))
-  });
-  const prSvg = d3.select(div).append('svg').attr('width',PW).attr('height',PH);
-  const prProj = d3.geoAlbers().rotate([66,0]).parallels([8,18]).fitSize([PW,PH],prFeatures);
-  const prPath = d3.geoPath().projection(prProj);
-
-  prSvg.selectAll('path').data(prFeatures.features).join('path')
-    .attr('class','county pr-county').attr('d',prPath)
-    .attr('fill', d=>getFill(d.id)).attr('stroke','#e8e8e8').attr('stroke-width',0.4)
-    .on('mousemove', onHover)
-    .on('mouseleave', ()=>document.getElementById('tooltip').style.display='none')
-    .on('click', onCountyClick)
-    .each(function(d){ countyPaths[d.id]=this; });
-  const prMesh = topojson.mesh(topo,{
-    type:'GeometryCollection',
-    geometries:topo.objects.counties.geometries.filter(g=>String(g.id).startsWith('72'))
-  },(a,b)=>a!==b);
-  prSvg.append('path').datum(prMesh).attr('fill','none').attr('stroke','white').attr('stroke-width',0.6);
+function buildTerritoryInsets(features){
+  document.getElementById('territory-insets')?.remove();
+  const strip = document.createElement('div');
+  strip.id = 'territory-insets';
+  strip.setAttribute('aria-label', 'Territory maps');
+  document.getElementById('map-wrap').appendChild(strip);
+  const territories = [['72','PUERTO RICO'],['78','U.S. VIRGIN ISLANDS'],
+    ['66','GUAM'],['60','AMERICAN SAMOA'],['69','NORTHERN MARIANA ISLANDS']];
+  for (const [prefix,label] of territories){
+    const group = {type:'FeatureCollection',features:features.filter(f=>String(f.id).startsWith(prefix))};
+    if (!group.features.length) continue;
+    const div = document.createElement('div');
+    div.className = 'territory-inset';
+    div.dataset.stateFips = prefix;
+    const title = document.createElement('div');
+    title.className = 'territory-label'; title.textContent = label;
+    div.appendChild(title); strip.appendChild(div);
+    const PW = 126, PH = 72;
+    const center = d3.geoCentroid(group);
+    const projection = d3.geoMercator().rotate([-center[0],0])
+      .fitExtent([[5,5],[PW-5,PH-5]],group);
+    const path = d3.geoPath(projection);
+    d3.select(div).append('svg').attr('width',PW).attr('height',PH)
+      .selectAll('path').data(group.features).join('path')
+      .attr('class','county territory-county')
+      .attr('data-fips', d=>d.id).attr('aria-label', d=>countyLabel(counties[d.id]))
+      .attr('d',path).attr('fill',d=>getFill(d.id))
+      .on('mousemove',onHover)
+      .on('mouseleave',()=>document.getElementById('tooltip').style.display='none')
+      .on('click',onCountyClick)
+      .each(function(d){countyPaths[d.id]=this;});
+  }
 }
 
 function zoomToBounds(bounds, W, H){
@@ -313,10 +310,11 @@ function onHover(event, d){
   if(!c){ tt.style.display='none'; return; }
   const avg = getAvg(d.id);
   const avgStr = avg !== null ? ` · ${avg}d avg` : '';
-  tt.textContent = `${c.name}, ${c.state}${avgStr}`;
+  tt.textContent = `${countyLabel(c)}${avgStr}`;
   tt.style.display='block';
-  tt.style.left=(event.offsetX+14)+'px';
-  tt.style.top=(event.offsetY-10)+'px';
+  const bounds = document.getElementById('map-wrap').getBoundingClientRect();
+  tt.style.left=(event.clientX-bounds.left+14)+'px';
+  tt.style.top=(event.clientY-bounds.top-10)+'px';
 }
 
 // ── County Popup ──────────────────────────────────────────────────────────
@@ -356,15 +354,15 @@ function onCountyClick(event, d){
   }
 
   let stateAvgHtml = '';
-  if (!s && c.state_avg && c.state_avg.avg) {
+  if (!s && c.state_avg && Number.isFinite(c.state_avg.avg)) {
     const sa = c.state_avg;
     const stateTotal = sa.total || 50;
     const stateRank  = sa.rank  || null;
     const statePct   = stateRank ? Math.round((1 - stateRank / stateTotal) * 100) : null;
     const [stLabel, stColor] = statePct === null ? ['','#555']
-      : statePct <= 33  ? ['Above Average','#721c24']
+      : statePct <= 33  ? ['Below Average','#721c24']
       : statePct <= 66  ? ['Average','#856404']
-      :                   ['Below Average','#155724'];
+      :                   ['Above Average','#155724'];
     stateAvgHtml = `<div style="text-align:center;padding:14px 8px 10px;background:#f7f8fa;border-radius:8px;margin-bottom:10px">
       <div style="font-size:11px;color:#999;text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">${c.state} Statewide Average TAT</div>
       <div style="font-size:32px;font-weight:700;color:#1a2b45;line-height:1">${daysToReadable(sa.avg)}</div>
@@ -423,9 +421,10 @@ function onCountyClick(event, d){
     </div>` : '';
 
   document.getElementById('popup-body').innerHTML = `
-    <h3>${c.name} County, ${c.state}</h3>
+    <h3>${countyLabel(c)}</h3>
     <span class="p-badge" style="background:${sc.badge};color:${sc.text}">${sc.label}</span>
     ${perfHtml}
+    ${!s ? '<div class="p-nodata">No county-level searches in the last 90 days.</div>' : ''}
     ${statsHtml}${stateAvgHtml}${outHtml}${latestHtml}${descHtml}
     ${editHtml}
 `;
@@ -436,10 +435,12 @@ function onCountyClick(event, d){
   popup.style.left = '-9999px'; popup.style.top = '-9999px'; popup.style.display = 'block';
   const pw = popup.offsetWidth, ph = popup.offsetHeight;
   const pad = 12;
-  let x = event.offsetX + 16;
-  let y = event.offsetY - 20;
+  const bounds = wrap.getBoundingClientRect();
+  const clickX = event.clientX - bounds.left, clickY = event.clientY - bounds.top;
+  let x = clickX + 16;
+  let y = clickY - 20;
   // Flip left if not enough room on right
-  if (x + pw + pad > wrap.clientWidth)  x = event.offsetX - pw - 8;
+  if (x + pw + pad > wrap.clientWidth)  x = clickX - pw - 8;
   // Clamp top so bottom doesn't go off screen
   if (y + ph + pad > wrap.clientHeight) y = wrap.clientHeight - ph - pad;
   // Never go above top
@@ -667,23 +668,38 @@ const STATE_FIPS_MAP = {
 };
 
 let searchIndex = [];
+function searchWords(value){
+  return value.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase()
+    .replace(/\bsaint\b/g,'st').replace(/\bsainte\b/g,'ste')
+    .replace(/[^a-z0-9]+/g,' ').trim().split(/\s+/);
+}
 function buildSearchIndex(){
+  searchIndex = [];
   // Counties
   for(const [fips,c] of Object.entries(counties)){
-    if(c.name) searchIndex.push({type:'county', fips, label:`${c.name} County`, sub:c.state});
+    if(c.name) searchIndex.push({type:'county', fips, label:countyLabel(c).replace(/, [A-Z]{2}$/, ''), sub:c.state});
   }
   // States
   for(const [abbrev, name] of Object.entries(STATE_NAMES)){
     searchIndex.push({type:'state', abbrev, label:name, sub:'State'});
   }
   searchIndex.sort((a,b)=>a.label.localeCompare(b.label));
+  for(const item of searchIndex){
+    item.words = searchWords(`${item.label} ${item.sub} ${STATE_NAMES[item.sub] || ''} ${item.fips || ''}`);
+    item.exact = searchWords(`${item.label} ${item.sub}`).join(' ');
+  }
 }
 const searchEl  = document.getElementById('search');
 const searchRes = document.getElementById('search-results');
 searchEl.addEventListener('input',()=>{
   const q = searchEl.value.trim().toLowerCase();
   if(q.length<2){searchRes.style.display='none';return;}
-  const hits = searchIndex.filter(x=>x.label.toLowerCase().includes(q)||x.sub.toLowerCase().includes(q)).slice(0,10);
+  const words = searchWords(q);
+  const exact = words.join(' ');
+  const state = words.length > 1 && STATE_NAMES[words.at(-1).toUpperCase()] ? words.at(-1).toUpperCase() : null;
+  const hits = searchIndex.filter(x=>(!state || x.sub === state || x.abbrev === state)
+    && words.every(word=>x.words.some(candidate=>candidate.startsWith(word))))
+    .sort((a,b)=>Number(b.exact === exact)-Number(a.exact === exact)).slice(0,10);
   if(!hits.length){searchRes.style.display='none';return;}
   searchRes.innerHTML = hits.map(h=> h.type==='state'
     ? `<div class="search-item" onclick="flyToState('${h.abbrev}')">${h.label}<span class="s-badge">State</span></div>`
@@ -708,6 +724,13 @@ function flyTo(fips){
   searchRes.style.display='none'; searchEl.value='';
   const el = countyPaths[fips];
   if(!el) return;
+  // Insets use a separate projection and must not zoom the mainland map.
+  if (el.classList.contains('territory-county')) {
+    el.closest('.territory-inset').scrollIntoView({block:'nearest',inline:'nearest'});
+    const r=el.getBoundingClientRect();
+    onCountyClick({clientX:r.x+r.width/2,clientY:r.y+r.height/2},el.__data__);
+    return;
+  }
   // Use the same pathFn projection the map was rendered with
   const bounds = pathFn.bounds(el.__data__);
   const W = +svgSel.attr('width'), H = +svgSel.attr('height');

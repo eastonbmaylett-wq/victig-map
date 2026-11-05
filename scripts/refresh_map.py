@@ -278,6 +278,8 @@ def main() -> int:
     live_summary = summarize_dataset(live)
     if live_summary != local_summary:
         raise RuntimeError("Live readback does not match the validated candidate summary")
+    if live != candidate:
+        raise RuntimeError("Live readback does not match the complete validated candidate")
     if live_summary["privateFieldCount"]:
         raise RuntimeError("Live readback contains private report fields")
 

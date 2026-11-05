@@ -12,6 +12,7 @@ from datetime import datetime
 from collections import defaultdict
 from pathlib import Path
 from public_data import write_public_json_atomic
+from jurisdiction import JurisdictionResolver
 
 BASE     = Path(__file__).parent
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
@@ -129,8 +130,52 @@ else:
     print(f"Format: {'NEW (Exact TAT)' if is_new_format else 'OLD (Search TAT)'}")
 print(f"Columns: {len(header)} | Rows: {len(raw_rows)-1}")
 
+# ── Load SimpleMaps base (names, existing status/descriptions) ───────────
+sm_file = BASE / "simplemaps-base.json"
+with open(sm_file) as f:
+    map_data = json.load(f)
+
+county_db = {}
+for fips, info in map_data.items():
+    abbrev = STATE_FIPS.get(fips[:2], '')
+    county_db[fips] = {
+        'fips':        fips,
+        'name':        info.get('name',''),
+        'state':       abbrev,
+        'status':      COLOR_STATUS.get(info.get('color',''), 'ok'),
+        'description': info.get('description',''),
+        'periods':  None,
+        'types':    None,
+        'trend':    0,
+        'latest':   None,
+        'precomp':  None,
+        'outliers': None,
+    }
+
+# Add US territories from counties-10m.json
+TERRITORY_FIPS = {'60':'AS','66':'GU','69':'MP','72':'PR','78':'VI'}
+topo_file = BASE / "counties-10m.json"
+if topo_file.exists():
+    with open(topo_file) as f:
+        topo_data = json.load(f)
+    for geom in topo_data['objects']['counties']['geometries']:
+        fips = str(geom['id'])
+        if fips[:2] in TERRITORY_FIPS and fips not in county_db:
+            name = geom.get('properties', {}).get('name', fips)
+            county_db[fips] = {
+                'fips': fips, 'name': name,
+                'state': TERRITORY_FIPS[fips[:2]],
+                'status': 'ok', 'description': '',
+                'periods': None, 'types': None, 'trend': 0,
+                'latest': None, 'precomp': None, 'outliers': None,
+            }
+
+resolver = JurisdictionResolver(county_db)
+
 # ── Parse rows ────────────────────────────────────────────────────────────
 rows, latest = [], {}
+unmatched = defaultdict(int)
+completed_dates = []
 # Pre-computed jurisdiction stats from new format
 precomp = {}  # jur -> {avg, max, min, gt2w, lt007}
 
@@ -140,6 +185,9 @@ for raw in raw_rows[1:]:
     jur      = get(COL_JUR)
     date_str = get(COL_START)
     search   = get(COL_SNAME)
+    raw_jur = jur
+    canonical, jurisdiction_state = resolver.resolve(jur, classify(search))
+    jur = canonical or jur
 
     # Compute TAT from start/completion if no TAT column
     if COMPUTE_TAT:
@@ -155,6 +203,7 @@ for raw in raw_rows[1:]:
     # Collect pre-computed stats (new format only)
     if COL_UJUR is not None:
         ujur = get(COL_UJUR)
+        ujur = resolver.resolve(ujur)[0] or ujur
         if ujur:
             avg = safe_float(get(COL_AVG))
             mx  = safe_float(get(COL_MAX))
@@ -171,7 +220,11 @@ for raw in raw_rows[1:]:
     dt  = parse_dt(date_str)
     if tat is None or dt is None or tat < 0: continue
 
-    rows.append({'jur': jur, 'tat': tat, 'dt': dt, 'type': classify(search)})
+    if canonical is None:
+        unmatched[raw_jur] += 1
+    completed = parse_dt(get(COL_COMPLETE))
+    if completed: completed_dates.append(completed)
+    rows.append({'jur': jur, 'state': jurisdiction_state, 'tat': tat, 'dt': dt, 'type': classify(search)})
 
     # Latest search per jurisdiction
     if jur not in latest or dt > latest[jur]['dt']:
@@ -215,7 +268,7 @@ for jur, pdata in jur_periods.items():
 # Rank within each period
 for period in ['30d','60d','90d','180d']:
     ranked = sorted(
-        [(j, s[period]['avg']) for j,s in period_stats.items() if s.get(period)],
+        [(j, s[period]['avg']) for j,s in period_stats.items() if j in county_db and s.get(period)],
         key=lambda x: x[1]
     )
     for rank,(jur,_) in enumerate(ranked, 1):
@@ -257,6 +310,7 @@ if suffix in ('.xlsx', '.xlsm'):
                 return str(row[i]).strip() if i is not None and i < len(row) and row[i] else ''
             for r in _rows[1:]:
                 jur    = _g(r,'jurisdiction')
+                jur    = resolver.resolve(jur)[0] or jur
                 reason = _g(r,'reason')
                 tat    = safe_float(_g(r,'search tat'))
                 if jur and reason:
@@ -268,46 +322,6 @@ if suffix in ('.xlsx', '.xlsm'):
     except Exception as e:
         print(f'Outliers sheet skipped: {e}')
 
-# ── Load SimpleMaps base (names, existing status/descriptions) ───────────
-sm_file = BASE / "simplemaps-base.json"
-with open(sm_file) as f:
-    map_data = json.load(f)
-
-county_db = {}
-for fips, info in map_data.items():
-    abbrev = STATE_FIPS.get(fips[:2], '')
-    county_db[fips] = {
-        'fips':        fips,
-        'name':        info.get('name',''),
-        'state':       abbrev,
-        'status':      COLOR_STATUS.get(info.get('color',''), 'ok'),
-        'description': info.get('description',''),
-        'periods':  None,
-        'types':    None,
-        'trend':    0,
-        'latest':   None,
-        'precomp':  None,
-        'outliers': None,
-    }
-
-# Add US territories from counties-10m.json
-TERRITORY_FIPS = {'60':'AS','66':'GU','69':'MP','72':'PR','78':'VI'}
-topo_file = BASE / "counties-10m.json"
-if topo_file.exists():
-    with open(topo_file) as f:
-        topo_data = json.load(f)
-    for geom in topo_data['objects']['counties']['geometries']:
-        fips = str(geom['id'])
-        if fips[:2] in TERRITORY_FIPS and fips not in county_db:
-            name = geom.get('properties', {}).get('name', fips)
-            county_db[fips] = {
-                'fips': fips, 'name': name,
-                'state': TERRITORY_FIPS[fips[:2]],
-                'status': 'ok', 'description': '',
-                'periods': None, 'types': None, 'trend': 0,
-                'latest': None, 'precomp': None, 'outliers': None,
-            }
-
 # ── Statewide averages ────────────────────────────────────────────────────
 # Group ALL rows by state prefix (e.g. 'MT-Lincoln County' → 'MT')
 # and compute average TAT across every search in that state.
@@ -315,10 +329,8 @@ state_all_tats   = defaultdict(list)   # all rows, all time
 state_period_tats = defaultdict(lambda: defaultdict(list))
 
 for r in rows:
-    jur = r['jur']
-    if '-' not in jur: continue
-    st = jur.split('-', 1)[0].strip().upper()
-    if len(st) != 2: continue          # must be a 2-letter state code
+    st = r['state']
+    if not st: continue
     state_all_tats[st].append(r['tat'])
     age = (max_date - r['dt']).days
     for label, days in [('30d',30),('60d',60),('90d',90),('180d',180)]:
@@ -342,19 +354,7 @@ for rank, (st, _) in enumerate(state_ranked, 1):
     state_avg[st]['total'] = state_total
 
 # ── Match jurisdictions to FIPS ───────────────────────────────────────────
-def norm(s): return re.sub(r'[^a-z]','',s.lower())
-
-sm_map = {}
-for fips, c in county_db.items():
-    state, name = c['state'], c['name'].upper()
-    for jur in set(list(period_stats.keys()) + list(precomp.keys())):
-        if '-' not in jur: continue
-        parts = jur.split('-', 1)
-        if parts[0].strip().upper() != state: continue
-        county = parts[1].strip().upper()
-        for suffix in ['', ' COUNTY', ' PARISH', ' BOROUGH', ' CITY']:
-            if norm(re.sub(suffix+'$', '', county).strip()) == norm(name):
-                sm_map[fips] = jur; break
+sm_map = {fips: fips for fips in county_db if fips in period_stats or fips in precomp}
 
 for fips, jur in sm_map.items():
     county_db[fips]['periods']  = period_stats.get(jur)
@@ -404,10 +404,14 @@ out = {
     'isNewFormat': is_new_format,
     'stateAvg':    state_avg,   # top-level for easy frontend lookup
     'counties':    county_db,
+    'reportRowCount': len(rows),
+    'reportCompletedThrough': max(completed_dates).isoformat(sep=' ') if completed_dates else None,
 }
 if existing_file.exists() and existing.get('closureSourceDate'):
     out['closureSourceDate'] = existing['closureSourceDate']
 write_public_json_atomic(DATA_DIR / "county-data.json", out)
 
+if unmatched:
+    print('Unmatched jurisdictions: ' + json.dumps(dict(sorted(unmatched.items()))))
 matched_states = len(state_avg)
 print(f"Done. {len(sm_map)} counties matched | {len(set(list(period_stats.keys())+list(precomp.keys())))} unique jurisdictions | {matched_states} states with avg data. Max date: {max_date.date()}")
