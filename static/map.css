@@ -47,7 +47,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .p-val{font-size:13px;font-weight:600;color:#222}
 .p-rank{font-size:11px;color:#666;margin-bottom:6px}
 .p-desc{font-size:11px;color:#555;background:#f8f8f8;border-radius:5px;padding:6px 8px;line-height:1.5;border-left:3px solid #dea922;margin-bottom:7px}
-.p-nodata{font-size:11px;color:#bbb;font-style:italic;margin-bottom:7px}
+.p-nodata{font-size:11px;color:#666;font-style:italic;margin-bottom:7px}
+.p-map-source{font-size:10px;color:#666;line-height:1.4;margin-top:7px}
 .p-latest{background:#f4f7ff;border-radius:6px;padding:7px 9px;margin-bottom:7px;font-size:11px}
 .p-latest-title{font-weight:600;color:#1a2b45;margin-bottom:5px;font-size:11px}
 .p-latest-row{display:flex;justify-content:space-between;color:#555;padding:1px 0}
@@ -72,11 +73,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 /* Legend */
 #admin-lock{position:absolute;bottom:14px;right:14px;background:white;border-radius:6px;padding:5px 8px;box-shadow:0 2px 8px rgba(0,0,0,.12);cursor:pointer;font-size:14px;z-index:50;opacity:.5;transition:opacity .15s}
 #admin-lock:hover{opacity:1}
-#legend{position:absolute;bottom:14px;left:12px;background:white;border-radius:8px;padding:10px 13px;box-shadow:0 2px 10px rgba(0,0,0,.12);font-size:11px;line-height:1.9;z-index:50}
+#legend{position:absolute;bottom:14px;left:12px;width:160px;background:white;border-radius:8px;padding:10px 13px;box-shadow:0 2px 10px rgba(0,0,0,.12);font-size:11px;line-height:1.9;z-index:50}
 #legend h4{font-size:10px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px}
 .leg-row{display:flex;align-items:center;gap:6px}
 .leg-sw{width:12px;height:12px;border-radius:3px;flex-shrink:0}
 #legend .nd{margin-top:6px;padding-top:6px;border-top:1px solid #eee;color:#666;font-size:10px}
+#legend .source-note{font-size:9px;line-height:1.4;color:#666;margin-top:6px}
 .no-data-swatch{display:inline-block;width:10px;height:10px;background:#c8ced4;margin-right:5px;vertical-align:middle}
 #gradient-bar{width:100%;height:8px;border-radius:4px;margin-bottom:3px;background:linear-gradient(to right,#55ae5c,#dea922,#de7612,#cf4027)}
 #gradient-labels{display:flex;justify-content:space-between;font-size:9px;color:#aaa}

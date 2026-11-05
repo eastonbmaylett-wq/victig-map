@@ -72,13 +72,23 @@ function getAvg(fips){
   const s = getStats(fips); return s?.avg ?? null;
 }
 
+// Statewide fallback is for map colors only. County statistics and rankings
+// continue to use actual county searches from the active period.
+function getMapMetric(fips){
+  const countyAvg = getAvg(fips);
+  if(Number.isFinite(countyAvg)) return {avg: countyAvg, source: 'county'};
+  const stateAvg = getC(fips)?.state_avg?.avg;
+  if(Number.isFinite(stateAvg)) return {avg: stateAvg, source: 'state'};
+  return {avg: null, source: 'none'};
+}
+
 function getStatus(fips){
   const c = getC(fips); if(!c) return 'no_data';
   return c.status || 'ok';
 }
 
 function getFill(fips){
-  const avg = getAvg(fips);
+  const {avg} = getMapMetric(fips);
   if(avg === null) return STATUS.no_data.fill;
   return gradScale(avg);
 }
@@ -138,7 +148,7 @@ async function init(){
       const st = c.state;
       if (!st || !c.periods) continue;
       const p = c.periods['90d'] || c.periods['180d'] || c.periods['60d'] || c.periods['30d'];
-      if (!p || !p.avg || !p.count) continue;
+      if (!p || !Number.isFinite(p.avg) || !p.count) continue;
       if (!buckets[st]) buckets[st] = { sum: 0, n: 0 };
       buckets[st].sum += p.avg * p.count;
       buckets[st].n   += p.count;
@@ -308,8 +318,12 @@ function onHover(event, d){
   const c = getC(d.id);
   const tt = document.getElementById('tooltip');
   if(!c){ tt.style.display='none'; return; }
-  const avg = getAvg(d.id);
-  const avgStr = avg !== null ? ` · ${avg}d avg` : '';
+  const metric = getMapMetric(d.id);
+  const avgStr = metric.source === 'county'
+    ? ` · ${daysToReadable(metric.avg)} county avg (90 days)`
+    : metric.source === 'state'
+      ? ` · ${daysToReadable(metric.avg)} ${c.state} statewide avg (full report)`
+      : ' · No available TAT data';
   tt.textContent = `${countyLabel(c)}${avgStr}`;
   tt.style.display='block';
   const bounds = document.getElementById('map-wrap').getBoundingClientRect();
@@ -363,11 +377,12 @@ function onCountyClick(event, d){
       : statePct <= 33  ? ['Below Average','#721c24']
       : statePct <= 66  ? ['Average','#856404']
       :                   ['Above Average','#155724'];
-    stateAvgHtml = `<div style="text-align:center;padding:14px 8px 10px;background:#f7f8fa;border-radius:8px;margin-bottom:10px">
+    stateAvgHtml = `<div class="p-state-average" style="text-align:center;padding:14px 8px 10px;background:#f7f8fa;border-radius:8px;margin-bottom:10px">
       <div style="font-size:11px;color:#999;text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">${c.state} Statewide Average TAT</div>
       <div style="font-size:32px;font-weight:700;color:#1a2b45;line-height:1">${daysToReadable(sa.avg)}</div>
+      <div class="p-map-source">Map color uses this statewide average.<br>Full report period · ${sa.count.toLocaleString()} search${sa.count !== 1 ? 'es' : ''}</div>
       ${stLabel ? `<div style="margin-top:6px;font-size:12px;color:#555">Search Time: <strong style="color:${stColor}">${stLabel}</strong></div>` : ''}
-      ${statePct !== null ? `<div style="font-size:11px;color:#888;margin-top:4px">Faster than <strong>${statePct}%</strong> of US states (#${stateRank} of ${stateTotal})</div>` : ''}
+      ${statePct !== null ? `<div style="font-size:11px;color:#888;margin-top:4px">Faster than <strong>${statePct}%</strong> of states and territories (#${stateRank} of ${stateTotal})</div>` : ''}
     </div>`;
   }
 
@@ -424,7 +439,7 @@ function onCountyClick(event, d){
     <h3>${countyLabel(c)}</h3>
     <span class="p-badge" style="background:${sc.badge};color:${sc.text}">${sc.label}</span>
     ${perfHtml}
-    ${!s ? '<div class="p-nodata">No county-level searches in the last 90 days.</div>' : ''}
+    ${!s ? `<div class="p-nodata">No county-level searches in the last 90 days.${stateAvgHtml ? '' : ' No statewide average is available.'}</div>` : ''}
     ${statsHtml}${stateAvgHtml}${outHtml}${latestHtml}${descHtml}
     ${editHtml}
 `;
