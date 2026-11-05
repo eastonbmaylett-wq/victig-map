@@ -399,7 +399,8 @@ async function doImport(){
     if(res.ok){
       setImportStatus('✓ ' + (data.message || 'Map updated!') + ' Reloading…','ok');
       setTimeout(()=>{
-        loadAll();
+        loadAll().then(() => setImportStatus('✓ ' + (data.message || 'Map updated!'), 'ok'))
+          .catch(() => setImportStatus('✓ Saved. Reload this page to refresh the admin view.', 'ok'));
         document.getElementById('import-btn').disabled=false;
         document.getElementById('import-btn').style.display='none';
         document.getElementById('file-ready-banner').style.display='none';
@@ -775,7 +776,7 @@ function renderAnalyticsChart(byDay){
 }
 function updateIframe(){
   const h = document.getElementById('iframe-height').value;
-  const base = window.location.origin;
+  const base = window.VICTIG_PUBLIC_MAP_ORIGIN || window.location.origin;
   document.getElementById('link-url').textContent = `${base}/`;
   document.getElementById('iframe-code').value =
     `<iframe src="${base}/embed" width="100%" height="${h}" frameborder="0" style="border-radius:8px;border:1px solid #ddd"></iframe>`;
