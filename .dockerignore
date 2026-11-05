@@ -1,0 +1,11 @@
+.git
+.env*
+.netlify
+.netlify-runtime
+node_modules
+dist
+**/__pycache__
+*.pyc
+*.db
+*.private.*
+outputs
