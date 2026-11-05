@@ -13,8 +13,9 @@ The Connecticut correction and validated November 4 TAT dataset are included.
 - Netlify serves only the public files explicitly copied into `dist/`.
 - The `map` Node function invokes the existing Python FastAPI application using
   a bundled Linux Python 3.13.12 interpreter. No route proxies to Fly.
-- The Python processing rules remain unchanged. Each invocation has a separate
-  temporary data directory that is removed after the request.
+- Each invocation has a separate temporary data directory that is removed
+  after the request. County identity corrections are documented in
+  `county-verification.md`.
 - Netlify Blobs stores the map, configuration, and analytics. Strong reads and
   conditional writes prevent overwriting a concurrent change.
 - Production uses `victig-map-v1-production`. Every preview has a separate store
@@ -82,8 +83,3 @@ with a freshly verified current revision when a data rollback is required.
 
 - Move from the legacy shared admin password to individual authenticated users.
   Password rotation and account changes are separate from this migration.
-- Audit the unrelated unmatched Alaska geometry separately.
-- The legacy importer can choose different records for ambiguous county/city
-  names because it iterates an unordered set. Parity tests use the same Python
-  hash seed on both paths to isolate hosting changes. The migration seed retains
-  the reviewed dataset. Exact county/city matching needs a separate correction.

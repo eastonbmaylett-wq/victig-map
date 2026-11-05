@@ -36,7 +36,7 @@ def main():
     ]
     app_files = public_files + [
         "main.py", "process.py", "public_data.py", "refresh_guard.py",
-        "closure_data.py", "simplemaps-base.json", "county-data.json", "site-config.json",
+        "closure_data.py", "jurisdiction.py", "simplemaps-base.json", "county-data.json", "site-config.json",
     ]
     for name in app_files:
         shutil.copy2(ROOT / name, APP / name)
