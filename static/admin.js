@@ -341,6 +341,16 @@ function selectState(abbrev){
 }
 
 // ── CSV Import ────────────────────────────────────────────────────────────
+addEventListener('victig-upload-progress', ({ detail }) => {
+  const message = detail.phase === 'uploading' ? `Uploading… ${detail.percent}%`
+    : 'Processing on the server… large reports can take several minutes. Keep this page open for the result.';
+  if (detail.target === '/admin/upload') setImportStatus(message, 'loading');
+  if (detail.target === '/admin/preview-columns') {
+    const preview = document.getElementById('col-preview');
+    if (preview) preview.textContent = detail.phase === 'uploading'
+      ? `Reading columns: uploading… ${detail.percent}%` : 'Reading report columns…';
+  }
+});
 async function previewColumns(file){
   const box = document.getElementById('col-preview');
   box.style.display = 'block';
@@ -389,7 +399,7 @@ function handleFile(file){
 }
 async function doImport(){
   if(!pendingFile) return;
-  setImportStatus('Uploading… this may take ~30s','loading');
+  setImportStatus('Uploading… large reports can take several minutes','loading');
   document.getElementById('import-btn').disabled = true;
   const form = new FormData();
   form.append('file', pendingFile);
@@ -412,7 +422,7 @@ async function doImport(){
       document.getElementById('import-btn').disabled=false;
     }
   } catch(e){
-    setImportStatus('Network error','err');
+    setImportStatus('Connection interrupted. Reload the map to check whether the import finished before retrying.','err');
     document.getElementById('import-btn').disabled=false;
   }
 }

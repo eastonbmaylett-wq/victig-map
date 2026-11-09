@@ -1,14 +1,18 @@
 import { getStore } from '@netlify/blobs';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { readFile, writeFile, mkdtemp, rm, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdtemp, rm, mkdir, open } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 const runtime = path.resolve(process.env.VICTIG_RUNTIME_DIR || '.netlify-runtime');
 const appDir = path.join(runtime, 'app');
 const MAX_UPLOAD = 125 * 1024 * 1024;
+// Leave room for map state and Python scratch files in Netlify's 512 MiB /tmp.
+export const MAX_REPORT_BYTES = 400 * 1024 * 1024;
+const JOB_TIMEOUT_MS = 14 * 60 * 1000;
 const CHUNK_BYTES = 2 * 1024 * 1024;
+const REPORT_PATHS = new Set(['/admin/upload', '/admin/preview-columns']);
 const UPLOAD_PATHS = new Set(['/admin/upload', '/admin/preview-columns', '/admin/upload-desc-doc',
   '/admin/upload-descriptions', '/automation/refresh']);
 const MAP_WRITES = new Set(['/admin/update-county', '/admin/update-state', '/admin/site-config',
@@ -100,7 +104,7 @@ export async function saveState(store, before, state) {
   return result.etag;
 }
 
-export async function runPython(payload, mapState, analytics) {
+export async function runPython(payload, mapState, analytics, timeoutMs = 48000) {
   const directory = await mkdtemp(path.join(tmpdir(), 'victig-map-'));
   try {
     const dataDir = path.join(directory, 'data');
@@ -135,7 +139,7 @@ export async function runPython(payload, mapState, analytics) {
       const timeout = setTimeout(() => {
         try { process.kill(-child.pid, 'SIGKILL'); } catch {}
         reject(new HttpError(504, 'Processing exceeded the time limit. No map changes were saved.'));
-      }, 48000);
+      }, timeoutMs);
       child.on('error', error => { clearTimeout(timeout); reject(error); });
       child.on('exit', code => {
         clearTimeout(timeout);
@@ -163,7 +167,7 @@ function responseFrom(result) {
   });
 }
 
-async function dispatch(request, context, store, body, target, operationId) {
+async function dispatch(request, context, store, body, target, operationId, report) {
   const url = target || new URL(request.url);
   if (!API_PATHS.has(url.pathname)) throw new HttpError(404, 'Not found');
   let payload;
@@ -181,10 +185,11 @@ async function dispatch(request, context, store, body, target, operationId) {
   const input = { path: url.pathname, query: url.search.slice(1), method: request.method,
     headers: [...request.headers].filter(([key]) => !['host', 'content-length', 'x-forwarded-for'].includes(key)),
     body: body.toString('base64'), ip: context.ip || '127.0.0.1', location };
+  if (report) input.report = { path: report.path, filename: report.filename };
   input.headers.push(['x-forwarded-for', input.ip]);
   for (let attempt = 0; attempt < 4; attempt++) {
     const db = analyticsRoute ? await store.getWithMetadata('analytics', { type: 'arrayBuffer' }) : null;
-    const output = await runPython(input, map?.data, db?.data);
+    const output = await runPython(input, map?.data, db?.data, report?.timeoutMs);
     if (output.response.status < 400) {
       if (map && MAP_WRITES.has(url.pathname)) {
         const operations = [...(map.data.operations || []), ...(operationId ? [{ id: operationId, response: output.response }] : [])].slice(-40);
@@ -210,6 +215,19 @@ async function uploadRequest(request, context, store, body) {
     const target = new URL(spec.target, 'https://upload.invalid');
     if (!UPLOAD_PATHS.has(target.pathname) || target.origin !== 'https://upload.invalid') throw new HttpError(400, 'Invalid upload target');
     const owner = await authenticate(request, target.pathname);
+    if (spec.protocol === 2) {
+      if (!REPORT_PATHS.has(target.pathname) || target.search || !Number.isSafeInteger(spec.bytes) || spec.bytes < 1
+        || typeof spec.filename !== 'string' || !spec.filename || spec.filename.length > 255) {
+        throw new HttpError(400, 'Invalid report upload metadata');
+      }
+      if (spec.bytes > MAX_REPORT_BYTES) throw new HttpError(413, 'This Netlify site supports reports up to 400 MiB. Larger reports need local processing.');
+      const id = randomUUID();
+      const metadata = { protocol: 2, target: target.pathname, filename: path.basename(spec.filename),
+        bytes: spec.bytes, owner, id, chunks: Math.ceil(spec.bytes / CHUNK_BYTES),
+        expires: Date.now() + 30 * 60 * 1000, phase: 'uploading' };
+      await store.setJSON(`uploads/${id}/metadata`, metadata, { onlyIfNew: true });
+      return json({ id, chunkBytes: CHUNK_BYTES, chunks: metadata.chunks });
+    }
     if (!Number.isSafeInteger(spec.bytes) || spec.bytes < 1 || spec.bytes > MAX_UPLOAD
       || !/^[a-f0-9]{64}$/.test(spec.sha256) || !spec.contentType?.startsWith('multipart/form-data; boundary=')) {
       throw new HttpError(400, 'Invalid upload size, digest, or format');
@@ -229,12 +247,22 @@ async function uploadRequest(request, context, store, body) {
   const owner = await authenticate(request, new URL(spec.target, url).pathname);
   if (!safeEqual(owner, spec.owner)) throw new HttpError(403, 'Upload belongs to another session');
   if (spec.expires < Date.now()) throw new HttpError(410, 'Upload expired. Please upload the file again.');
+  if (spec.protocol === 2 && part === 'status' && request.method === 'GET') {
+    if (spec.phase === 'complete') return responseFrom(spec.response);
+    if (spec.phase === 'processing' && spec.leaseUntil <= Date.now()) {
+      throw new HttpError(504, 'Report processing exceeded the hosting time limit. Reload the map to check its current data before retrying.');
+    }
+    return json({ id, phase: spec.phase }, 202);
+  }
   if (/^\d+$/.test(part || '') && request.method === 'PUT') {
     const index = Number(part);
     if (spec.phase !== 'uploading' || index >= spec.chunks || body.length !== Math.min(CHUNK_BYTES, spec.bytes - index * CHUNK_BYTES)) {
       throw new HttpError(400, 'Invalid upload chunk');
     }
     const chunkKey = `uploads/${id}/part-${index}`;
+    if (spec.protocol === 2 && !safeEqual(request.headers.get('x-victig-chunk-sha256'), sha(body))) {
+      throw new HttpError(400, 'Upload chunk integrity check failed');
+    }
     const result = await store.set(chunkKey, body, { onlyIfNew: true, metadata: { sha256: sha(body) } });
     if (!result.modified) {
       const existing = await store.getWithMetadata(chunkKey, { type: 'arrayBuffer' });
@@ -244,6 +272,18 @@ async function uploadRequest(request, context, store, body) {
   }
   if (part !== 'complete' || request.method !== 'POST') throw new HttpError(405, 'Method not allowed');
   if (spec.phase === 'complete') return responseFrom(spec.response);
+  if (spec.protocol === 2) {
+    let digest;
+    try { digest = JSON.parse(body.toString()).sha256; } catch {}
+    if (!/^[a-f0-9]{64}$/.test(digest || '')) throw new HttpError(400, 'Invalid upload digest');
+    if (spec.phase !== 'uploading' && !safeEqual(digest, spec.sha256)) throw new HttpError(409, 'Upload digest differs from the queued report');
+    if (spec.phase === 'uploading') {
+      const queued = await store.setJSON(key, { ...spec, sha256: digest, phase: 'queued',
+        expires: Date.now() + 30 * 60 * 1000 }, { onlyIfMatch: snapshot.etag });
+      if (!queued.modified) throw new HttpError(409, 'Upload changed. Retry completion.');
+    }
+    return json({ id, phase: spec.phase === 'uploading' ? 'queued' : spec.phase }, 202);
+  }
   if (spec.phase === 'processing' && spec.leaseUntil > Date.now()) throw new HttpError(409, 'Upload is still processing');
   const lease = await store.setJSON(key, { ...spec, phase: 'processing', leaseUntil: Date.now() + 60000 }, { onlyIfMatch: snapshot.etag });
   if (!lease.modified) throw new HttpError(409, 'Upload is already processing');
@@ -268,6 +308,70 @@ async function uploadRequest(request, context, store, body) {
   } catch (error) {
     await store.setJSON(key, { ...spec, phase: 'uploading' }, { onlyIfMatch: lease.etag });
     throw error;
+  }
+}
+
+// Called by a background function with the original credential in its request,
+// never saved in Blobs. Every invocation rechecks ownership and takes a lease.
+export async function processUpload(request, context, providedStore) {
+  if (request.method !== 'POST') throw new HttpError(405, 'Method not allowed');
+  const { id } = await request.json();
+  if (!/^[a-f0-9-]{36}$/.test(id || '')) throw new HttpError(404, 'Upload not found');
+  const store = providedStore || getStore({ name: storeName(context), consistency: 'strong' });
+  const key = `uploads/${id}/metadata`;
+  const snapshot = await store.getWithMetadata(key, { type: 'json' });
+  const spec = snapshot?.data;
+  if (!spec || spec.protocol !== 2) throw new HttpError(404, 'Upload not found');
+  const owner = await authenticate(request, spec.target);
+  if (!safeEqual(owner, spec.owner)) throw new HttpError(403, 'Upload belongs to another session');
+  if (spec.expires < Date.now()) throw new HttpError(410, 'Upload expired');
+  if (spec.phase === 'complete' || (spec.phase === 'processing' && spec.leaseUntil > Date.now())) return;
+  if (!['queued', 'processing'].includes(spec.phase)) throw new HttpError(409, 'Upload is not ready');
+  const deadline = Date.now() + JOB_TIMEOUT_MS;
+  const lease = await store.setJSON(key, { ...spec, phase: 'processing', leaseUntil: deadline + 60000 },
+    { onlyIfMatch: snapshot.etag });
+  if (!lease.modified) return;
+  let directory;
+  let response;
+  try {
+    directory = await mkdtemp(path.join(tmpdir(), 'victig-report-'));
+    const reportPath = path.join(directory, 'report');
+    const file = await open(reportPath, 'wx', 0o600);
+    const digest = createHash('sha256');
+    try {
+      for (let index = 0; index < spec.chunks; index++) {
+        if (Date.now() >= deadline) throw new HttpError(504, 'Report download exceeded the processing time limit. No map changes were saved.');
+        const chunk = await store.getWithMetadata(`uploads/${id}/part-${index}`, { type: 'arrayBuffer' });
+        if (!chunk) throw new HttpError(400, 'The upload is incomplete. Please upload the file again.');
+        const bytes = Buffer.from(chunk.data);
+        const hash = sha(bytes);
+        if (bytes.length !== Math.min(CHUNK_BYTES, spec.bytes - index * CHUNK_BYTES)
+          || !safeEqual(hash, chunk.metadata?.sha256)) throw new HttpError(400, 'Upload integrity check failed');
+        digest.update(hash);
+        await file.writeFile(bytes);
+      }
+    } finally { await file.close(); }
+    if (!safeEqual(digest.digest('hex'), spec.sha256)) throw new HttpError(400, 'Upload integrity check failed');
+    const target = new URL(spec.target, request.url);
+    const timeoutMs = deadline - Date.now();
+    if (timeoutMs <= 0) throw new HttpError(504, 'Report download exceeded the processing time limit. No map changes were saved.');
+    response = await dispatch(new Request(target, { method: 'POST', headers: request.headers }),
+      context, store, Buffer.alloc(0), target, id, { path: reportPath, filename: spec.filename, timeoutMs });
+  } catch (error) {
+    if (!error.status) console.error('Report processing failed', { name: error.name, code: error.code });
+    response = json({ detail: error.status ? error.message : 'Report processing failed. Reload the map to check its current data before retrying.' }, error.status || 500);
+  } finally {
+    if (directory) await rm(directory, { recursive: true, force: true });
+  }
+  const savedResponse = { status: response.status, headers: [...response.headers],
+    body: Buffer.from(await response.arrayBuffer()).toString('base64') };
+  const saved = await store.setJSON(key, { ...spec, phase: 'complete', response: savedResponse }, { onlyIfMatch: lease.etag });
+  // Do not delete a replacement worker's input if our lease was superseded.
+  if (saved.modified) {
+    for (let index = 0; index < spec.chunks; index += 8) {
+      await Promise.all(Array.from({ length: Math.min(8, spec.chunks - index) }, (_, offset) =>
+        store.delete(`uploads/${id}/part-${index + offset}`)));
+    }
   }
 }
 

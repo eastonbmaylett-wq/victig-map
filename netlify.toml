@@ -13,6 +13,9 @@
 [functions.map]
   included_files = [".netlify-runtime/**"]
 
+[functions.process-upload-background]
+  included_files = [".netlify-runtime/**"]
+
 [[headers]]
   for = "/*"
   [headers.values]
