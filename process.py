@@ -22,8 +22,11 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 parser = argparse.ArgumentParser()
 parser.add_argument('report', nargs='?', default=str(BASE / 'uploaded.csv'))
 parser.add_argument('--format')
+parser.add_argument('--input-fd', type=int)
 parser.add_argument('--admin-upload', action='store_true')
 args = parser.parse_args()
+if args.input_fd is not None and (args.input_fd < 0 or not args.format):
+    parser.error('--input-fd requires a nonnegative descriptor and --format')
 IN_PATH = args.report
 IN_FILE  = Path(IN_PATH)
 
@@ -87,9 +90,16 @@ def safe_float(v):
 # ── Read rows without retaining the report in memory ──────────────────────
 suffix = (args.format or IN_FILE.suffix).lower()
 
+def open_report():
+    # Lambda does not provide /dev/fd. Duplicate the inherited descriptor
+    # directly so each pass can close its stream without closing the original.
+    if args.input_fd is not None:
+        return os.fdopen(os.dup(args.input_fd), 'rb')
+    return IN_FILE.open('rb')
+
 def raw_rows():
     # Reopen for each pass: first find the report's max date, then aggregate.
-    with IN_FILE.open('rb') as source:
+    with open_report() as source:
         source.seek(0)
         if suffix in ('.xlsx', '.xlsm'):
             import openpyxl

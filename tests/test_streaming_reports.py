@@ -15,9 +15,24 @@ ROOT = Path(__file__).resolve().parents[1]
 class StreamingReportTests(unittest.TestCase):
     def run_report(self, report, directory, *arguments, descriptor=False):
         environment = dict(os.environ, DATA_DIR=directory)
+        # Reproduce Lambda's missing descriptor filesystem even on a Mac that
+        # provides /dev/fd. Integer descriptors must work without either alias.
+        if descriptor:
+            original_site = getattr(sys.modules.get('sitecustomize'), '__file__', '')
+            (Path(directory) / 'sitecustomize.py').write_text(f'''
+import sys, runpy
+original = {original_site!r}
+if original:
+    runpy.run_path(original)
+def reject_descriptor_paths(event, args):
+    if event == 'open' and isinstance(args[0], str) and args[0].startswith(('/dev/fd/', '/proc/self/fd/')):
+        raise FileNotFoundError('Descriptor paths are unavailable in this runtime')
+sys.addaudithook(reject_descriptor_paths)
+''')
+            environment['PYTHONPATH'] = os.pathsep.join(filter(None, [directory, environment.get('PYTHONPATH')]))
         with open(report, 'rb') as source:
-            name = f'/dev/fd/{source.fileno()}' if descriptor else str(report)
-            result = subprocess.run([sys.executable, str(ROOT / 'process.py'), name, *arguments],
+            input_args = ['--input-fd', str(source.fileno())] if descriptor else [str(report)]
+            result = subprocess.run([sys.executable, str(ROOT / 'process.py'), *input_args, *arguments],
                 env=environment, capture_output=True, text=True,
                 pass_fds=(source.fileno(),) if descriptor else ())
         self.assertEqual(result.returncode, 0, result.stderr)

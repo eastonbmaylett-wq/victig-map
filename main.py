@@ -331,25 +331,47 @@ async def update_county(payload: dict):
         json.dump(data, f)
     return {"ok": True}
 
-@app.post("/admin/upload")
-async def upload_csv(password: str, file: UploadFile = File(...)):
-    check_auth(password)
-    name = (file.filename or "").lower()
+def _process_admin_report(source, filename):
+    name = (filename or "").lower()
     if name.endswith(".xls"):
         raise HTTPException(status_code=400, detail="Old .xls format not supported - please Save As .xlsx in Excel first")
     # Inherit the seekable upload descriptor. Large reports are not duplicated
     # in RAM or in /tmp, and Excel is no longer expanded into a second CSV file.
-    await file.seek(0)
-    descriptor = file.file.fileno()
+    source.seek(0)
+    descriptor = source.fileno()
     result = subprocess.run(
-        [sys.executable, str(BASE / "process.py"), f"/dev/fd/{descriptor}",
+        [sys.executable, str(BASE / "process.py"), "--input-fd", str(descriptor),
          "--format", Path(name).suffix or ".csv", "--admin-upload"],
         capture_output=True, text=True, cwd=str(BASE), pass_fds=(descriptor,)
     )
     if result.returncode != 0:
-        err = (result.stderr or result.stdout or "Unknown error")[:800]
-        raise HTTPException(status_code=500, detail=err)
+        diagnostic = result.stderr or result.stdout or "Unknown error"
+        # Keep row values, headers, paths, and credentials out of shared logs.
+        # Exception types and source locations are enough to locate failures.
+        errors = re.findall(r"(?m)^([A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception)|(?:zipfile\.)?BadZipFile)(?::|$)", result.stderr or "")
+        code = errors[-1].split('.')[-1] if errors else "REPORT_PROCESSING_FAILED"
+        frames = [f"{Path(filename).name}:{line}:{function}" for filename, line, function in
+                  re.findall(r'File "([^"\n]+\.py)", line (\d+), in ([\w<>]+)', result.stderr or "")][-4:]
+        status, message = 500, f"Report processing failed ({code}). No map changes were saved."
+        for marker, explanation in {
+            "ERROR: No rows found": "The report is empty.",
+            "ERROR: No 'Jurisdiction' column": "The report needs a Jurisdiction column.",
+            "ERROR: No TAT column": "The report needs a TAT column or Start and Completion columns.",
+            "ERROR: No valid data rows": "The report has no valid jurisdiction, date, and TAT rows.",
+        }.items():
+            if marker in diagnostic:
+                status, code, message = 400, "INVALID_REPORT", explanation
+                break
+        raise HTTPException(status_code=status, detail=message, headers={
+            "X-Victig-Error-Code": code, "X-Victig-Error-Frames": json.dumps(frames),
+        })
     return {"ok": True, "message": result.stdout.strip() or "Map data updated successfully"}
+
+
+@app.post("/admin/upload")
+async def upload_csv(password: str, file: UploadFile = File(...)):
+    check_auth(password)
+    return _process_admin_report(file.file, file.filename)
 
 
 def _run_tat_report(raw: bytes, filename: str) -> None:

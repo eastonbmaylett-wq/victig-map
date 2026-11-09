@@ -124,3 +124,27 @@ with a freshly verified current revision when a data rollback is required.
 
 - Move from the legacy shared admin password to individual authenticated users.
   Password rotation and account changes are separate from this migration.
+
+## Upload diagnostics and runtime verification
+
+`GET /api/upload-health` processes fixed two-row CSV and Excel fixtures through
+the same Python entry point as admin imports and checks the resulting row count
+and average. It uses a private invocation directory, accepts no report or other
+input, and never reads or writes the Blob map state. The result is cached per
+function instance and includes the deployed commit. A successful build alone
+does not replace this runtime check.
+
+Report failures display an Upload ID. Look up that ID in Netlify's
+`process-upload-background` logs or in the private Blob store under
+`upload-diagnostics/<id>`. Records include stage, HTTP status, error code,
+source locations, size, format, request ID, and commit. They omit credentials,
+original filenames, report values, and raw exception messages. The daily
+cleanup retains diagnostics for 14 days; upload metadata and chunks keep their
+existing shorter expiry. Browser connection and non-JSON proxy failures also
+display the upload ID and failed stage when available.
+
+The November 9 descriptor regression used `/dev/fd/<number>`, which was absent
+in Netlify's runtime. Imports now inherit the numeric descriptor and use
+`os.dup`/`os.fdopen` directly. Tests deliberately reject `/dev/fd` and
+`/proc/self/fd`, and confirm that the runtime check fails with the original
+implementation before passing with the correction.

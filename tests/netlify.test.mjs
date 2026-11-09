@@ -49,6 +49,17 @@ before(async () => {
     `PW_HASH = "${hash(testPassword)}"`));
   process.env.VICTIG_RUNTIME_DIR = root;
   process.env.VICTIG_PYTHON = 'python3';
+  const originalSite = execFileSync('python3', ['-c', "import sys; print(getattr(sys.modules.get('sitecustomize'), '__file__', ''))"], { encoding: 'utf8' }).trim();
+  await writeFile(path.join(root, 'app/sitecustomize.py'), `import sys, runpy
+original = ${JSON.stringify(originalSite)}
+if original:
+    runpy.run_path(original)
+def check(event, args):
+    if event == 'open' and isinstance(args[0], str) and args[0].startswith(('/dev/fd/', '/proc/self/fd/')):
+        raise FileNotFoundError('Descriptor paths are unavailable in this runtime')
+sys.addaudithook(check)
+`);
+  process.env.PYTHONPATH = [path.join(root, 'app'), process.env.PYTHONPATH].filter(Boolean).join(path.delimiter);
   process.env.VICTIG_MAP_INGEST_TOKEN = 'local-test-ingest-token';
   api = await import('../netlify/server/app.mjs');
 });
@@ -65,6 +76,24 @@ test('preview deployments cannot use production storage', () => {
   assert.equal(api.storeName(context), 'victig-map-v1-preview-test-preview');
   assert.equal(api.storeName({ deploy: { context: 'production' } }), 'victig-map-v1-production');
   assert.notEqual(api.storeName({}), 'victig-map-v1-production');
+});
+
+test('runtime health check catches the original failure and verifies CSV/XLSX without touching storage', async () => {
+  const main = path.join(root, 'app/main.py');
+  const original = await readFile(main, 'utf8');
+  const broken = original.replace('"--input-fd", str(descriptor)', 'f"/dev/fd/{descriptor}"');
+  assert.notEqual(original, broken);
+  try {
+    await writeFile(main, broken);
+    await assert.rejects(api.runPython({ path: '/internal/upload-self-test', headers: [] }, null, null),
+      error => error.status === 500);
+  } finally { await writeFile(main, original); }
+  const store = new MemoryStore();
+  const response = await api.handle(request('/api/upload-health'), context, store);
+  assert.equal(response.status, 200, await response.clone().text());
+  assert.deepEqual((await response.json()).checks, ['csv_import', 'xlsx_import', 'aggregated_values']);
+  assert.equal(store.data.size, 0);
+  assert.equal((await api.handle(request('/api/upload-health', { method: 'POST', body: 'ignored' }), context, store)).status, 404);
 });
 
 test('public map retains all eight Connecticut county records and has no private report fields', async () => {
@@ -291,6 +320,59 @@ test('incomplete and corrupted background uploads leave published state unchange
     assert.ok(![...store.data.keys()].some(key => key.startsWith('backups/')), fault);
     assert.ok(![...store.data.keys()].some(key => key.includes('/part-')), fault);
   }
+});
+
+test('processor failures expose an upload ID and persist safe diagnostic locations without report contents', async () => {
+  const store = new MemoryStore();
+  await api.handle(request('/county-data.json'), context, store);
+  const before = await store.get('state');
+  const privateValue = 'PRIVATE-SYNTHETIC-CANDIDATE-DO-NOT-LOG';
+  const bytes = Buffer.from(privateValue);
+  const upload = await startReport(store, bytes.length, '/admin/upload', `${privateValue}.xlsx`);
+  await completeReport(store, upload, [await putReportPart(store, upload, 0, bytes)]);
+  await runReport(store, upload);
+  const response = await statusReport(store, upload);
+  assert.equal(response.status, 500);
+  const body = await response.json();
+  assert.equal(body.uploadId, upload.id);
+  assert.equal(body.errorCode, 'BadZipFile');
+  assert.ok(body.detail.includes(upload.id));
+  const diagnostic = await store.get(`upload-diagnostics/${upload.id}`, { type: 'json' });
+  assert.equal(diagnostic.errorCode, 'BadZipFile');
+  assert.equal(diagnostic.stage, 'processing');
+  assert.equal(diagnostic.bytes, bytes.length);
+  assert.ok(diagnostic.frames.length > 0);
+  assert.ok(!JSON.stringify(diagnostic).includes(privateValue));
+  assert.ok(!JSON.stringify(diagnostic).includes(testPassword));
+  assert.ok(!JSON.stringify(body).includes(privateValue));
+  assert.equal(await store.get('state'), before);
+});
+
+test('Excel imports complete through the real background handler without descriptor filesystem paths', async () => {
+  const bytes = execFileSync('python3', ['-c', `import io, sys, openpyxl
+book = openpyxl.Workbook()
+book.active.title = 'TAT Outliers'
+book.active.append(['Ignored'])
+sheet = book.create_sheet('Turnaround Report')
+sheet.append(['Jurisdiction', 'Search TAT', 'Start Date/Time'])
+sheet.append(['CT-Fairfield County', 2, '2026-11-09 10:00:00'])
+sheet.append(['CT-Fairfield County', 4, '2026-11-08 10:00:00'])
+output = io.BytesIO()
+book.save(output)
+sys.stdout.buffer.write(output.getvalue())
+`]);
+  const store = new MemoryStore();
+  const upload = await startReport(store, bytes.length, '/admin/upload', 'synthetic.xlsx');
+  await completeReport(store, upload, [await putReportPart(store, upload, 0, bytes)]);
+  await runReport(store, upload);
+  const response = await statusReport(store, upload);
+  assert.equal(response.status, 200, await response.clone().text());
+  const state = await store.get('state', { type: 'json' });
+  assert.equal(state.data.reportRowCount, 2);
+  assert.equal(state.data.counties['09001'].periods['90d'].avg, 3);
+  const diagnostic = await store.get(`upload-diagnostics/${upload.id}`, { type: 'json' });
+  assert.equal(diagnostic.stage, 'complete');
+  assert.equal(diagnostic.status, 200);
 });
 
 test('background upload limits, owner checks, expiry, and per-chunk digest fail closed', async () => {
