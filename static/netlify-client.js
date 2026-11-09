@@ -20,52 +20,76 @@
     }
   }
   async function uploadReport(url, options, headers) {
-    const file = options.body.get('file');
-    if (!(file instanceof Blob)) return Response.json({ detail: 'Choose a report file first.' }, { status: 400 });
-    if (file.size > 400 * 1024 * 1024) return Response.json({
-      detail: 'This Netlify site supports reports up to 400 MiB. Larger reports need local processing.',
-    }, { status: 413 });
-    const jsonHeaders = new Headers(headers);
-    jsonHeaders.set('Content-Type', 'application/json');
-    const started = await nativeFetch('/api/uploads', { method: 'POST', headers: jsonHeaders, signal: options.signal,
-      body: JSON.stringify({ protocol: 2, target: url.pathname, filename: file.name || 'report.csv', bytes: file.size }),
-    });
-    if (!started.ok) return started;
-    const upload = await started.json();
-    const digests = [];
-    for (let index = 0; index < upload.chunks; index++) {
-      const bytes = await file.slice(index * upload.chunkBytes, (index + 1) * upload.chunkBytes).arrayBuffer();
-      const hash = await digest(bytes);
-      const partHeaders = new Headers(headers);
-      partHeaders.set('X-Victig-Chunk-SHA256', hash);
-      const part = await retryFetch(`/api/uploads/${upload.id}/${index}`, {
-        method: 'PUT', headers: partHeaders, body: bytes, signal: options.signal,
+    let uploadId, phase = 'starting';
+    const failure = async response => {
+      let body;
+      try { body = await response.json(); } catch { body = {}; }
+      const message = typeof body.detail === 'string' ? body.detail : `Upload failed during ${phase} (HTTP ${response.status}).`;
+      const requestId = response.headers.get('x-nf-request-id');
+      const reference = uploadId ? `Upload ID: ${uploadId}` : requestId ? `Request ID: ${requestId}` : '';
+      return Response.json({ ...body, uploadId, stage: phase,
+        detail: reference && !message.includes(reference) ? `${message} ${reference}` : message,
+      }, { status: response.status });
+    };
+    try {
+      const file = options.body.get('file');
+      if (!(file instanceof Blob)) return Response.json({ detail: 'Choose a report file first.' }, { status: 400 });
+      if (file.size > 400 * 1024 * 1024) return Response.json({
+        detail: 'This Netlify site supports reports up to 400 MiB. Larger reports need local processing.',
+      }, { status: 413 });
+      const jsonHeaders = new Headers(headers);
+      jsonHeaders.set('Content-Type', 'application/json');
+      const started = await nativeFetch('/api/uploads', { method: 'POST', headers: jsonHeaders, signal: options.signal,
+        body: JSON.stringify({ protocol: 2, target: url.pathname, filename: file.name || 'report.csv', bytes: file.size }),
       });
-      if (!part.ok) return part;
-      digests.push(hash);
-      progress(url.pathname, 'uploading', Math.round((index + 1) / upload.chunks * 100));
-    }
-    const complete = await retryFetch(`/api/uploads/${upload.id}/complete`, {
-      method: 'POST', headers: jsonHeaders, signal: options.signal,
-      body: JSON.stringify({ sha256: await digest(new TextEncoder().encode(digests.join(''))) }),
-    });
-    if (complete.status !== 202) return complete;
-    const triggered = await retryFetch('/.netlify/functions/process-upload-background', {
-      method: 'POST', headers: jsonHeaders, signal: options.signal, body: JSON.stringify({ id: upload.id }),
-    });
-    if (!triggered.ok) return triggered;
-    const startedAt = Date.now();
-    progress(url.pathname, 'processing', 100);
-    while (Date.now() - startedAt < 16 * 60 * 1000) {
-      await sleep(2000);
-      const response = await retryFetch(`/api/uploads/${upload.id}/status`, { headers, signal: options.signal });
-      if (response.status !== 202) return response;
-      const status = await response.json();
-      if (status.phase === 'queued' && Date.now() - startedAt > 2 * 60 * 1000) {
-        return Response.json({ detail: 'Background processing did not start. Please retry the upload.' }, { status: 503 });
+      if (!started.ok) return failure(started);
+      const upload = await started.json();
+      uploadId = upload.id;
+      phase = 'uploading';
+      const digests = [];
+      for (let index = 0; index < upload.chunks; index++) {
+        const bytes = await file.slice(index * upload.chunkBytes, (index + 1) * upload.chunkBytes).arrayBuffer();
+        const hash = await digest(bytes);
+        const partHeaders = new Headers(headers);
+        partHeaders.set('X-Victig-Chunk-SHA256', hash);
+        const part = await retryFetch(`/api/uploads/${upload.id}/${index}`, {
+          method: 'PUT', headers: partHeaders, body: bytes, signal: options.signal,
+        });
+        if (!part.ok) return failure(part);
+        digests.push(hash);
+        progress(url.pathname, 'uploading', Math.round((index + 1) / upload.chunks * 100));
       }
+      phase = 'queueing';
+      const complete = await retryFetch(`/api/uploads/${upload.id}/complete`, {
+        method: 'POST', headers: jsonHeaders, signal: options.signal,
+        body: JSON.stringify({ sha256: await digest(new TextEncoder().encode(digests.join(''))) }),
+      });
+      if (complete.status !== 202) return complete.ok ? complete : failure(complete);
+      phase = 'starting processor';
+      const triggered = await retryFetch('/.netlify/functions/process-upload-background', {
+        method: 'POST', headers: jsonHeaders, signal: options.signal, body: JSON.stringify({ id: upload.id }),
+      });
+      if (!triggered.ok) return failure(triggered);
+      const startedAt = Date.now();
+      phase = 'processing';
+      progress(url.pathname, 'processing', 100);
+      while (Date.now() - startedAt < 16 * 60 * 1000) {
+        await sleep(2000);
+        const response = await retryFetch(`/api/uploads/${upload.id}/status`, { headers, signal: options.signal });
+        if (response.status !== 202) return response.ok ? response : failure(response);
+        const status = await response.json();
+        if (status.phase === 'queued' && Date.now() - startedAt > 2 * 60 * 1000) {
+          return failure(Response.json({ detail: 'Background processing did not start. Please retry the upload.' }, { status: 503 }));
+        }
+      }
+      return failure(Response.json({ detail: 'The server has not returned a result. Reload the map to check its current data before retrying.' }, { status: 504 }));
+    } catch (error) {
+      const errorCode = error.name === 'SyntaxError' ? 'INVALID_SERVER_RESPONSE'
+        : error.name === 'AbortError' ? 'UPLOAD_CANCELLED' : 'CONNECTION_FAILED';
+      return failure(Response.json({ errorCode,
+        detail: `${errorCode} during ${phase}. Reload the map to check whether the import finished before retrying.`,
+      }, { status: 502 }));
     }
-    return Response.json({ detail: 'The server has not returned a result. Reload the map to check its current data before retrying.' }, { status: 504 });
   }
   window.fetch = async (input, options = {}) => {
     if (typeof input !== 'string' && !(input instanceof URL)) return nativeFetch(input, options);

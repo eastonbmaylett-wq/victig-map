@@ -7,6 +7,36 @@ import { webcrypto, createHash } from 'node:crypto';
 const source = await readFile('static/netlify-client.js', 'utf8');
 const sha = value => createHash('sha256').update(value).digest('hex');
 
+function client(fetch) {
+  const window = { fetch };
+  runInNewContext(source, { window, URL, Headers, FormData, Blob, Response, TextEncoder, crypto: webcrypto,
+    location: { href: 'https://map.example/admin', origin: 'https://map.example', pathname: '/admin' },
+    addEventListener() {}, dispatchEvent() {}, CustomEvent: class {},
+    setTimeout(callback) { queueMicrotask(callback); },
+  });
+  return window;
+}
+
+test('HTML errors and exhausted network retries retain an upload ID and stage', async () => {
+  for (const fault of ['html', 'network']) {
+    const window = client(async url => {
+      if (url === '/api/uploads') return Response.json({ id: 'traceable-upload', chunks: 1, chunkBytes: 10 });
+      if (fault === 'network') throw new TypeError('Do not expose raw connection details');
+      return new Response('<html>Proxy failure containing private diagnostics</html>', { status: 502 });
+    });
+    const form = new FormData();
+    form.set('file', new File(['tiny'], 'report.csv'));
+    const result = await window.fetch('/admin/upload?password=test-password', { method: 'POST', body: form });
+    assert.equal(result.status, 502);
+    const body = await result.json();
+    assert.equal(body.uploadId, 'traceable-upload');
+    assert.equal(body.stage, 'uploading');
+    assert.ok(body.detail.includes('Upload ID: traceable-upload'));
+    assert.ok(!body.detail.includes('private diagnostics'));
+    assert.ok(!body.detail.includes('raw connection details'));
+  }
+});
+
 test('browser uploads bounded file slices, retries a transient chunk failure, and polls for the final result', async () => {
   const chunks = [], events = [], hashes = [];
   let polls = 0, retried = false, complete = false, triggered = false;

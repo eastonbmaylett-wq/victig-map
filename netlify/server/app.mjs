@@ -25,6 +25,7 @@ const sha = value => createHash('sha256').update(value).digest('hex');
 const json = (value, status = 200) => Response.json(value, { status, headers });
 const env = key => globalThis.Netlify?.env?.get(key) ?? process.env[key];
 let filesPromise;
+let uploadHealthPromise;
 
 export class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
@@ -167,6 +168,20 @@ function responseFrom(result) {
   });
 }
 
+async function recordUpload(store, spec, context, stage, extra = {}) {
+  const { manifest } = await bundledFiles();
+  const extension = path.extname(spec.filename).toLowerCase();
+  const record = { event: 'report_upload', uploadId: spec.id, stage,
+    at: new Date().toISOString(), commit: manifest.commit,
+    requestId: context.requestId || null, target: spec.target, bytes: spec.bytes,
+    format: ['.csv', '.tsv', '.txt', '.xlsx', '.xlsm', '.xls'].includes(extension) ? extension : 'other', ...extra };
+  // Only these explicit fields enter diagnostics, never credentials, the
+  // original filename, report rows, raw exceptions, or request bodies.
+  (record.status >= 400 ? console.error : console.info)(JSON.stringify(record));
+  try { await store.setJSON(`upload-diagnostics/${spec.id}`, record); }
+  catch { console.error(JSON.stringify({ event: 'upload_diagnostic_save_failed', uploadId: spec.id })); }
+}
+
 async function dispatch(request, context, store, body, target, operationId, report) {
   const url = target || new URL(request.url);
   if (!API_PATHS.has(url.pathname)) throw new HttpError(404, 'Not found');
@@ -226,6 +241,7 @@ async function uploadRequest(request, context, store, body) {
         bytes: spec.bytes, owner, id, chunks: Math.ceil(spec.bytes / CHUNK_BYTES),
         expires: Date.now() + 30 * 60 * 1000, phase: 'uploading' };
       await store.setJSON(`uploads/${id}/metadata`, metadata, { onlyIfNew: true });
+      await recordUpload(store, metadata, context, 'uploading');
       return json({ id, chunkBytes: CHUNK_BYTES, chunks: metadata.chunks });
     }
     if (!Number.isSafeInteger(spec.bytes) || spec.bytes < 1 || spec.bytes > MAX_UPLOAD
@@ -281,6 +297,7 @@ async function uploadRequest(request, context, store, body) {
       const queued = await store.setJSON(key, { ...spec, sha256: digest, phase: 'queued',
         expires: Date.now() + 30 * 60 * 1000 }, { onlyIfMatch: snapshot.etag });
       if (!queued.modified) throw new HttpError(409, 'Upload changed. Retry completion.');
+      await recordUpload(store, spec, context, 'queued');
     }
     return json({ id, phase: spec.phase === 'uploading' ? 'queued' : spec.phase }, 202);
   }
@@ -331,6 +348,9 @@ export async function processUpload(request, context, providedStore) {
   const lease = await store.setJSON(key, { ...spec, phase: 'processing', leaseUntil: deadline + 60000 },
     { onlyIfMatch: snapshot.etag });
   if (!lease.modified) return;
+  const started = Date.now();
+  let stage = 'assembling';
+  await recordUpload(store, spec, context, stage);
   let directory;
   let response;
   try {
@@ -355,14 +375,29 @@ export async function processUpload(request, context, providedStore) {
     const target = new URL(spec.target, request.url);
     const timeoutMs = deadline - Date.now();
     if (timeoutMs <= 0) throw new HttpError(504, 'Report download exceeded the processing time limit. No map changes were saved.');
+    stage = 'processing';
+    await recordUpload(store, spec, context, stage);
     response = await dispatch(new Request(target, { method: 'POST', headers: request.headers }),
       context, store, Buffer.alloc(0), target, id, { path: reportPath, filename: spec.filename, timeoutMs });
   } catch (error) {
-    if (!error.status) console.error('Report processing failed', { name: error.name, code: error.code });
     response = json({ detail: error.status ? error.message : 'Report processing failed. Reload the map to check its current data before retrying.' }, error.status || 500);
+    response.headers.set('X-Victig-Error-Code', error.status ? `HTTP_${error.status}` : 'REPORT_WORKER_FAILED');
   } finally {
     if (directory) await rm(directory, { recursive: true, force: true });
   }
+  let errorCode, frames;
+  if (!response.ok) {
+    errorCode = response.headers.get('x-victig-error-code') || `HTTP_${response.status}`;
+    if (!/^[A-Za-z0-9_]{1,80}$/.test(errorCode)) errorCode = 'REPORT_PROCESSING_FAILED';
+    try { frames = JSON.parse(response.headers.get('x-victig-error-frames') || '[]'); } catch { frames = []; }
+    frames = Array.isArray(frames) ? frames.filter(value => typeof value === 'string'
+      && /^[A-Za-z0-9_.-]+\.py:\d+:[\w<>]+$/.test(value)).slice(-4) : [];
+    const document = await response.json();
+    response = json({ ...document, uploadId: id, stage, errorCode,
+      detail: `${document.detail || 'Report processing failed.'} Upload ID: ${id}` }, response.status);
+  }
+  await recordUpload(store, spec, context, response.ok ? 'complete' : stage,
+    { status: response.status, elapsedMs: Date.now() - started, ...(errorCode ? { errorCode, frames } : {}) });
   const savedResponse = { status: response.status, headers: [...response.headers],
     body: Buffer.from(await response.arrayBuffer()).toString('base64') };
   const saved = await store.setJSON(key, { ...spec, phase: 'complete', response: savedResponse }, { onlyIfMatch: lease.etag });
@@ -383,6 +418,17 @@ export async function handle(request, context, providedStore) {
       const { manifest } = await bundledFiles();
       return json({ version: manifest.buildId, commit: manifest.commit, has_analytics: true,
         hosting: 'netlify', storage: storeName(context) });
+    }
+    if (url.pathname === '/api/upload-health' && request.method === 'GET') {
+      // Cache per function instance. Fixed tiny fixtures, no request input,
+      // credentials, Blobs reads/writes, or calls to the publishing path.
+      uploadHealthPromise ??= runPython({ path: '/internal/upload-self-test', headers: [] }, null, null)
+        .then(output => ({ ok: output.response.status === 200 }))
+        .catch(() => ({ ok: false }));
+      const result = await uploadHealthPromise;
+      const { manifest } = await bundledFiles();
+      return json({ ...result, commit: manifest.commit,
+        checks: ['csv_import', 'xlsx_import', 'aggregated_values'], writesLiveData: false }, result.ok ? 200 : 503);
     }
     if (url.pathname === '/api/my-ip' && request.method === 'GET') return json({ ip: context.ip });
     if (['/county-data.json', '/site-config.json'].includes(url.pathname) && ['GET', 'HEAD'].includes(request.method)) {

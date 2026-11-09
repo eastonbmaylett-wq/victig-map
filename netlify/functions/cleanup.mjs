@@ -24,7 +24,17 @@ export default async () => {
   }
   backups.sort((a, b) => b.savedAt.localeCompare(a.savedAt));
   await Promise.all(backups.slice(14).map(({ key }) => store.delete(key)));
-  return Response.json({ expiredUploads: expired, backupsRetained: Math.min(14, backups.length) });
+  let diagnosticsDeleted = 0;
+  for await (const page of store.list({ prefix: 'upload-diagnostics/', paginate: true })) {
+    for (const { key } of page.blobs) {
+      const record = await store.get(key, { type: 'json' });
+      if (Date.parse(record?.at) < Date.now() - 14 * 24 * 60 * 60 * 1000) {
+        await store.delete(key);
+        diagnosticsDeleted++;
+      }
+    }
+  }
+  return Response.json({ expiredUploads: expired, backupsRetained: Math.min(14, backups.length), diagnosticsDeleted });
 };
 
 export const config = { schedule: '0 9 * * *' };

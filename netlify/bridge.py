@@ -27,6 +27,32 @@ async def invoke(payload):
     # Netlify, while the unchanged FastAPI route receives it internally.
     headers = [(str(k).lower(), str(v)) for k, v in payload.get("headers", [])]
     header_map = dict(headers)
+    if payload["path"] == "/internal/upload-self-test":
+        # Fixed synthetic inputs only. runPython gives this check its own data
+        # directory and never publishes any of its outputs to durable storage.
+        import tempfile
+        import openpyxl
+        rows = [["Jurisdiction", "Search TAT", "Start Date/Time"],
+                ["CT-Fairfield County", 2, "2026-11-09 10:00:00"],
+                ["CT-Fairfield County", 4, "2026-11-08 10:00:00"]]
+        for extension in ("csv", "xlsx"):
+            with tempfile.TemporaryFile() as source:
+                if extension == "csv":
+                    source.write(('\n'.join(','.join(map(str, row)) for row in rows) + '\n').encode())
+                else:
+                    workbook = openpyxl.Workbook()
+                    workbook.active.title = "Turnaround Report"
+                    for row in rows:
+                        workbook.active.append(row)
+                    workbook.save(source)
+                    workbook.close()
+                source.flush()
+                main._process_admin_report(source, f"synthetic.{extension}")
+                data = json.loads(main.DATA_FILE.read_text())
+                if data.get("reportRowCount") != 2 or data["counties"]["09001"]["periods"]["90d"]["avg"] != 3:
+                    raise RuntimeError("Synthetic report readback failed")
+        return {"status": 200, "headers": [["content-type", "application/json"]],
+                "body": base64.b64encode(b'{"ok":true,"csv":true,"xlsx":true}').decode()}
     if payload.get("report"):
         # Background imports use an already verified file on disk. Do not turn
         # it into base64, multipart bytes, or another in-memory copy.
@@ -38,17 +64,19 @@ async def invoke(payload):
             raise ValueError("Invalid report route")
         with open(report["path"], "rb") as handle:
             upload = UploadFile(file=handle, filename=report["filename"])
+            response_headers = [["content-type", "application/json"]]
             try:
                 document = await routes[payload["path"]](
                     password=header_map.get("x-victig-password", ""), file=upload)
                 status = 200
             except HTTPException as error:
                 document, status = {"detail": error.detail}, error.status_code
+                response_headers.extend((error.headers or {}).items())
         if main.DATA_FILE.exists():
             data = json.loads(main.DATA_FILE.read_text())
             if strip_private_fields(data):
                 main.DATA_FILE.write_text(json.dumps(data))
-        return {"status": status, "headers": [["content-type", "application/json"]],
+        return {"status": status, "headers": response_headers,
                 "body": base64.b64encode(json.dumps(document, default=str).encode()).decode()}
     query = dict(parse_qsl(payload.get("query", ""), keep_blank_values=True))
     if header_map.get("x-victig-password"):
