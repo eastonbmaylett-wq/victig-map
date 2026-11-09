@@ -1,6 +1,72 @@
 /* Keep existing admin workflows while sending large files in bounded chunks. */
 (() => {
   const nativeFetch = window.fetch.bind(window);
+  const reportPaths = new Set(['/admin/upload', '/admin/preview-columns']);
+  const digest = async bytes => [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))]
+    .map(value => value.toString(16).padStart(2, '0')).join('');
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const progress = (target, phase, percent) => dispatchEvent(new CustomEvent('victig-upload-progress', {
+    detail: { target, phase, percent },
+  }));
+  async function retryFetch(url, options) {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const response = await nativeFetch(url, options);
+        if (attempt >= 3 || ![408, 429, 502, 503, 504].includes(response.status)) return response;
+      } catch (error) {
+        if (attempt >= 3 || options.signal?.aborted) throw error;
+      }
+      await sleep(500 * 2 ** attempt);
+    }
+  }
+  async function uploadReport(url, options, headers) {
+    const file = options.body.get('file');
+    if (!(file instanceof Blob)) return Response.json({ detail: 'Choose a report file first.' }, { status: 400 });
+    if (file.size > 400 * 1024 * 1024) return Response.json({
+      detail: 'This Netlify site supports reports up to 400 MiB. Larger reports need local processing.',
+    }, { status: 413 });
+    const jsonHeaders = new Headers(headers);
+    jsonHeaders.set('Content-Type', 'application/json');
+    const started = await nativeFetch('/api/uploads', { method: 'POST', headers: jsonHeaders, signal: options.signal,
+      body: JSON.stringify({ protocol: 2, target: url.pathname, filename: file.name || 'report.csv', bytes: file.size }),
+    });
+    if (!started.ok) return started;
+    const upload = await started.json();
+    const digests = [];
+    for (let index = 0; index < upload.chunks; index++) {
+      const bytes = await file.slice(index * upload.chunkBytes, (index + 1) * upload.chunkBytes).arrayBuffer();
+      const hash = await digest(bytes);
+      const partHeaders = new Headers(headers);
+      partHeaders.set('X-Victig-Chunk-SHA256', hash);
+      const part = await retryFetch(`/api/uploads/${upload.id}/${index}`, {
+        method: 'PUT', headers: partHeaders, body: bytes, signal: options.signal,
+      });
+      if (!part.ok) return part;
+      digests.push(hash);
+      progress(url.pathname, 'uploading', Math.round((index + 1) / upload.chunks * 100));
+    }
+    const complete = await retryFetch(`/api/uploads/${upload.id}/complete`, {
+      method: 'POST', headers: jsonHeaders, signal: options.signal,
+      body: JSON.stringify({ sha256: await digest(new TextEncoder().encode(digests.join(''))) }),
+    });
+    if (complete.status !== 202) return complete;
+    const triggered = await retryFetch('/.netlify/functions/process-upload-background', {
+      method: 'POST', headers: jsonHeaders, signal: options.signal, body: JSON.stringify({ id: upload.id }),
+    });
+    if (!triggered.ok) return triggered;
+    const startedAt = Date.now();
+    progress(url.pathname, 'processing', 100);
+    while (Date.now() - startedAt < 16 * 60 * 1000) {
+      await sleep(2000);
+      const response = await retryFetch(`/api/uploads/${upload.id}/status`, { headers, signal: options.signal });
+      if (response.status !== 202) return response;
+      const status = await response.json();
+      if (status.phase === 'queued' && Date.now() - startedAt > 2 * 60 * 1000) {
+        return Response.json({ detail: 'Background processing did not start. Please retry the upload.' }, { status: 503 });
+      }
+    }
+    return Response.json({ detail: 'The server has not returned a result. Reload the map to check its current data before retrying.' }, { status: 504 });
+  }
   window.fetch = async (input, options = {}) => {
     if (typeof input !== 'string' && !(input instanceof URL)) return nativeFetch(input, options);
     const url = new URL(input, location.href);
@@ -23,6 +89,7 @@
       }
     }
     if (!(options.body instanceof FormData)) return nativeFetch(url, { ...options, headers });
+    if (reportPaths.has(url.pathname)) return uploadReport(url, options, headers);
     const encoded = new Response(options.body);
     const bytes = new Uint8Array(await encoded.arrayBuffer());
     if (bytes.length <= 3 * 1024 * 1024) return nativeFetch(url, { ...options, headers });

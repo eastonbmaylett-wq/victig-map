@@ -29,16 +29,43 @@ The Connecticut correction and validated November 4 TAT dataset are included.
 
 ## Uploads and analytics
 
-Netlify has a 6 MB buffered request limit. The browser and guarded Python
-refresh runner stage large uploads as authenticated 2 MB chunks. The server
-requires every chunk and verifies the complete SHA-256 digest before processing.
-Completed uploads have an idempotent response. Staging expires after 30 minutes;
-successful uploads delete their chunks immediately. Daily cleanup handles
-abandoned uploads.
+Browser TAT imports and column previews use protocol 2: raw file slices of 2 MiB,
+each with a SHA-256 checksum. Completion records a SHA-256 of the ordered chunk
+hashes, queues the report, and returns immediately. The browser invokes
+`process-upload-background` with only the upload ID and authentication header,
+then polls the authenticated status endpoint. Credentials are never saved in
+upload metadata. A worker lease prevents duplicate processing, and publication
+uses the existing operation ID, backup, and conditional state replacement.
 
-Function processing stops after 48 seconds. A timeout or failed validation
-does not publish any map changes. Test the largest normal report in a preview
-before cutover. The existing 100 MB TAT and 25 MB closure file limits remain.
+The background worker verifies every chunk and writes one temporary report on
+disk. Python inherits that file descriptor without base64, multipart copies,
+or Excel-to-CSV expansion. The processor makes two streaming passes and retains
+statistics per jurisdiction rather than every report row. Column previews read
+only six rows. CSV, TSV, XLSX, and XLSM retain the admin's sheet selection and
+existing county, period, ranking, notice, and privacy behavior.
+
+The browser's report limit is **400 MiB**, with a **14-minute** worker budget
+(including downloading chunks), leaving time for cleanup inside Netlify's
+15-minute background-function limit. These are resource bounds, not a promise
+of unlimited files: complex Excel workbooks can still exhaust available memory.
+Background functions are available on credit-based Free plans; no plan upgrade
+or additional developer seat is needed. See
+[Netlify background functions](https://docs.netlify.com/build/functions/background-functions/)
+and [function limits](https://docs.netlify.com/build/functions/configuration/).
+
+The map stays unchanged until processing succeeds and the conditional save
+accepts the current revision. Failed validation or processing does not publish.
+An interrupted connection can leave a successful background publication; reload
+the map to check its current data before retrying. An import replaces report
+statistics; uploading arbitrary file pieces separately does not merge them.
+Larger-than-400-MiB reports need a separately reviewed local processing route.
+
+Staging expires after 30 minutes (renewed when queued). Finished workers remove
+raw chunks immediately, including failed validation; daily cleanup handles
+abandoned uploads. Completed responses are replayable until expiry. The legacy
+multipart protocol used by the guarded Python refresh runner and description
+imports remains compatible, with its 48-second synchronous processing budget
+and existing 100 MB automated TAT / 25 MB automated closure file limits.
 Legacy location enrichment runs in batches of ten records, with the browser
 continuing through the remaining batches. Each batch fits the function limit.
 
@@ -48,6 +75,20 @@ by their original Fly event IDs. Repeating an import does not duplicate events,
 and visits already recorded on Netlify remain intact. Analytics stays private.
 
 ## Verification
+
+For the large-report regression checks, run:
+
+```sh
+npm run build
+python3 -m unittest discover -s tests -p 'test_*.py'
+VICTIG_STRESS_TEST=1 VICTIG_SLOW_BACKGROUND_TEST=1 npm run test:netlify
+```
+
+The opt-in stress check stages and processes a synthetic CSV just under 400 MiB,
+verifies all 417,759 rows, and removes its files. The slow-worker check spends
+49 seconds in a fixture processor to verify it can finish past the old timeout.
+Use only synthetic reports in preview storage. Verify the deploy includes both
+`map` and `process-upload-background` before a production cutover.
 
 ```sh
 npm ci

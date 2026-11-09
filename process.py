@@ -7,9 +7,11 @@ Supports:
                       Unique Jurisdiction, Avg. TAT, Max. TAT, Min. TAT, >2 weeks TAT, <0.007 TAT
 Usage: python3 process.py <path-to-csv-or-xlsx>
 """
-import csv, json, io, re, sys, os
+import argparse, csv, json, io, re, sys, os
 from datetime import datetime
 from collections import defaultdict
+from functools import lru_cache
+from itertools import chain
 from pathlib import Path
 from public_data import write_public_json_atomic
 from jurisdiction import JurisdictionResolver
@@ -17,7 +19,12 @@ from jurisdiction import JurisdictionResolver
 BASE     = Path(__file__).parent
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
-IN_PATH  = sys.argv[1] if len(sys.argv) > 1 else str(BASE / "uploaded.csv")
+parser = argparse.ArgumentParser()
+parser.add_argument('report', nargs='?', default=str(BASE / 'uploaded.csv'))
+parser.add_argument('--format')
+parser.add_argument('--admin-upload', action='store_true')
+args = parser.parse_args()
+IN_PATH = args.report
 IN_FILE  = Path(IN_PATH)
 
 STATE_FIPS = {
@@ -39,13 +46,32 @@ def classify(s):
     if 'state' in s and ('criminal' in s or 'court' in s or 'search' in s): return 'statewide'
     return 'other'
 
-def compute_stats(vals):
-    if not vals: return None
-    return {'avg': round(sum(vals)/len(vals), 6),
-            'max': round(max(vals), 6),
-            'min': round(min(vals), 6),
-            'count': len(vals)}
+class Stats:
+    """Constant-memory summary, independent of the number of report rows."""
+    def __init__(self):
+        self.count = 0
+        self.total = self.correction = 0.0
+        self.minimum = float('inf')
+        self.maximum = float('-inf')
 
+    def add(self, value):
+        total = self.total + value
+        self.correction += ((self.total - total) + value if abs(self.total) >= abs(value)
+                            else (value - total) + self.total)
+        self.total = total
+        self.count += 1
+        self.minimum = min(self.minimum, value)
+        self.maximum = max(self.maximum, value)
+
+    def average(self):
+        return (self.total + self.correction) / self.count
+
+def compute_stats(vals):
+    if not vals.count: return None
+    return {'avg': round(vals.average(), 6), 'max': round(vals.maximum, 6),
+            'min': round(vals.minimum, 6), 'count': vals.count}
+
+@lru_cache(maxsize=8192)
 def parse_dt(s):
     if not s: return None
     for fmt in ('%Y-%m-%d %H:%M:%S', '%m/%d/%Y %H:%M', '%Y-%m-%dT%H:%M:%S',
@@ -58,41 +84,51 @@ def safe_float(v):
     try: return float(v)
     except: return None
 
-# ── Load file ─────────────────────────────────────────────────────────────
-suffix = IN_FILE.suffix.lower()
-raw_rows = []
+# ── Read rows without retaining the report in memory ──────────────────────
+suffix = (args.format or IN_FILE.suffix).lower()
 
-if suffix in ('.xlsx', '.xlsm'):
-    import openpyxl
-    wb = openpyxl.load_workbook(str(IN_FILE), read_only=True, data_only=True)
-    # prefer the main data sheet
-    sheet_names = wb.sheetnames
-    main_sheet = None
-    for name in sheet_names:
-        n = name.lower()
-        if 'turnaround' in n or 'search' in n or 'tat' in n:
-            main_sheet = wb[name]; break
-    if not main_sheet:
-        main_sheet = wb.active
-    for row in main_sheet.iter_rows(values_only=True):
-        raw_rows.append(['' if v is None else str(v) for v in row])
-else:
-    with open(str(IN_FILE), newline='', encoding='utf-8-sig') as f:
-        lines = f.readlines()
-    # skip non-header preamble rows (before the actual header)
-    start = 0
-    for i, line in enumerate(lines):
-        if 'jurisdiction' in line.lower() or 'search tat' in line.lower():
-            start = i; break
-    reader = csv.reader(io.StringIO(''.join(lines[start:])))
-    for row in reader:
-        raw_rows.append(row)
+def raw_rows():
+    # Reopen for each pass: first find the report's max date, then aggregate.
+    with IN_FILE.open('rb') as source:
+        source.seek(0)
+        if suffix in ('.xlsx', '.xlsm'):
+            import openpyxl
+            wb = openpyxl.load_workbook(source, read_only=True, data_only=True)
+            try:
+                sheet = None
+                for name in wb.sheetnames:
+                    n = name.lower()
+                    match = ('turnaround' in n or ('search' in n and 'tat' not in n)
+                             or ('tat' in n and 'fastest' not in n and 'outlier' not in n)) if args.admin_upload else (
+                                 'turnaround' in n or 'search' in n or 'tat' in n)
+                    if match:
+                        sheet = wb[name]
+                        break
+                if sheet is None:
+                    sheet = max(wb.worksheets, key=lambda s: s.max_row or 0) if args.admin_upload else wb.active
+                for row in sheet.iter_rows(values_only=True):
+                    yield ['' if value is None else str(value) for value in row]
+            finally:
+                wb.close()
+        else:
+            text = io.TextIOWrapper(source, newline='', encoding='utf-8-sig')
+            # Preserve the legacy preamble detection without readlines().
+            for line in text:
+                if 'jurisdiction' in line.lower() or 'search tat' in line.lower():
+                    lines = chain([line], text)
+                    break
+            else:
+                text.seek(0)
+                lines = text
+            yield from csv.reader(lines, delimiter='\t' if suffix in ('.tsv', '.txt') else ',')
 
-if not raw_rows:
+source_rows = raw_rows()
+header = next(source_rows, None)
+source_rows.close()
+if header is None:
     print("ERROR: No rows found in file"); sys.exit(1)
 
 # ── Detect columns ────────────────────────────────────────────────────────
-header = raw_rows[0]
 hmap   = {h.strip().lower(): i for i, h in enumerate(header)}
 
 def col(name): return hmap.get(name.lower())
@@ -128,7 +164,36 @@ if COMPUTE_TAT:
     print("Format: RAW (TAT computed from Start/Completion dates)")
 else:
     print(f"Format: {'NEW (Exact TAT)' if is_new_format else 'OLD (Search TAT)'}")
-print(f"Columns: {len(header)} | Rows: {len(raw_rows)-1}")
+print(f"Columns: {len(header)} | Streaming report rows")
+
+def data_rows():
+    source = raw_rows()
+    next(source, None)
+    yield from source
+
+def cell(row, index):
+    return row[index].strip() if index is not None and index < len(row) else ''
+
+def row_values(raw):
+    dt = parse_dt(cell(raw, COL_START))
+    if not cell(raw, COL_JUR) or dt is None:
+        return None
+    completed = parse_dt(cell(raw, COL_COMPLETE))
+    if COMPUTE_TAT:
+        tat = (completed - dt).total_seconds() / 86400 if completed and completed > dt else None
+    else:
+        tat = safe_float(cell(raw, COL_TAT))
+    if tat is None or tat < 0:
+        return None
+    return tat, dt, completed
+
+max_date = None
+for raw in data_rows():
+    values = row_values(raw)
+    if values and (max_date is None or values[1] > max_date):
+        max_date = values[1]
+if max_date is None:
+    print("ERROR: No valid data rows parsed"); sys.exit(1)
 
 # ── Load SimpleMaps base (names, existing status/descriptions) ───────────
 sm_file = BASE / "simplemaps-base.json"
@@ -171,39 +236,35 @@ if topo_file.exists():
             }
 
 resolver = JurisdictionResolver(county_db)
+resolve_jurisdiction = lru_cache(maxsize=8192)(resolver.resolve)
 
 # ── Parse rows ────────────────────────────────────────────────────────────
-rows, latest = [], {}
+row_count, latest = 0, {}
 unmatched = defaultdict(int)
-completed_dates = []
+completed_through = None
+PERIODS = [('30d', 30), ('60d', 60), ('90d', 90), ('180d', 180)]
+jur_periods = defaultdict(lambda: defaultdict(Stats))
+jur_types = defaultdict(lambda: defaultdict(Stats))
+jur_trend = defaultdict(lambda: {'recent': Stats(), 'prior': Stats()})
+state_all_tats = defaultdict(Stats)
+state_period_tats = defaultdict(lambda: defaultdict(Stats))
 # Pre-computed jurisdiction stats from new format
 precomp = {}  # jur -> {avg, max, min, gt2w, lt007}
 
-for raw in raw_rows[1:]:
+for raw in data_rows():
     def get(c): return raw[c].strip() if c is not None and c < len(raw) else ''
 
     jur      = get(COL_JUR)
     date_str = get(COL_START)
     search   = get(COL_SNAME)
     raw_jur = jur
-    canonical, jurisdiction_state = resolver.resolve(jur, classify(search))
+    canonical, jurisdiction_state = resolve_jurisdiction(jur, classify(search))
     jur = canonical or jur
-
-    # Compute TAT from start/completion if no TAT column
-    if COMPUTE_TAT:
-        comp_dt  = parse_dt(get(COL_COMPLETE))
-        start_dt = parse_dt(date_str)
-        if start_dt and comp_dt and comp_dt > start_dt:
-            tat_str = str((comp_dt - start_dt).total_seconds() / 86400)
-        else:
-            tat_str = ''
-    else:
-        tat_str = get(COL_TAT)
 
     # Collect pre-computed stats (new format only)
     if COL_UJUR is not None:
         ujur = get(COL_UJUR)
-        ujur = resolver.resolve(ujur)[0] or ujur
+        ujur = resolve_jurisdiction(ujur)[0] or ujur
         if ujur:
             avg = safe_float(get(COL_AVG))
             mx  = safe_float(get(COL_MAX))
@@ -215,16 +276,28 @@ for raw in raw_rows[1:]:
                                  'gt2weeks': int(gt2) if gt2 else 0,
                                  'lt10min':  int(lt7) if lt7 else 0}
 
-    if not jur or not tat_str or not date_str: continue
-    tat = safe_float(tat_str)
-    dt  = parse_dt(date_str)
-    if tat is None or dt is None or tat < 0: continue
+    values = row_values(raw)
+    if values is None: continue
+    tat, dt, completed = values
 
     if canonical is None:
         unmatched[raw_jur] += 1
-    completed = parse_dt(get(COL_COMPLETE))
-    if completed: completed_dates.append(completed)
-    rows.append({'jur': jur, 'state': jurisdiction_state, 'tat': tat, 'dt': dt, 'type': classify(search)})
+    if completed and (completed_through is None or completed > completed_through):
+        completed_through = completed
+    row_count += 1
+    age = (max_date - dt).days
+    if age <= 180:
+        for label, days in PERIODS:
+            if age <= days:
+                jur_periods[jur][label].add(tat)
+        jur_types[jur][classify(search)].add(tat)
+    if age <= 60:
+        jur_trend[jur]['recent' if age <= 30 else 'prior'].add(tat)
+    if jurisdiction_state:
+        state_all_tats[jurisdiction_state].add(tat)
+        for label, days in PERIODS:
+            if age <= days:
+                state_period_tats[jurisdiction_state][label].add(tat)
 
     # Latest search per jurisdiction
     if jur not in latest or dt > latest[jur]['dt']:
@@ -234,33 +307,7 @@ for raw in raw_rows[1:]:
             'completion': comp_str,
         }
 
-if not rows:
-    print("ERROR: No valid data rows parsed"); sys.exit(1)
-
-max_date = max(r['dt'] for r in rows)
-
 # ── Period stats (computed from individual rows) ──────────────────────────
-jur_periods = defaultdict(lambda: defaultdict(list))
-jur_types   = defaultdict(lambda: defaultdict(list))
-
-for r in rows:
-    age = (max_date - r['dt']).days
-    if age > 180: continue
-    for label, days in [('30d',30),('60d',60),('90d',90),('180d',180)]:
-        if age <= days:
-            jur_periods[r['jur']][label].append(r['tat'])
-    jur_types[r['jur']][r['type']].append(r['tat'])
-
-# Trend (30d vs 30-60d)
-jur_trend = {}
-for r in rows:
-    age = (max_date - r['dt']).days
-    if age > 60: continue
-    jur = r['jur']
-    if jur not in jur_trend: jur_trend[jur] = {'recent':[],'prior':[]}
-    if age <= 30: jur_trend[jur]['recent'].append(r['tat'])
-    else:         jur_trend[jur]['prior'].append(r['tat'])
-
 period_stats = {}
 for jur, pdata in jur_periods.items():
     period_stats[jur] = {p: compute_stats(v) for p,v in pdata.items()}
@@ -279,8 +326,8 @@ type_stats = {j:{t:compute_stats(v) for t,v in d.items()} for j,d in jur_types.i
 
 trends = {}
 for jur, d in jur_trend.items():
-    if d['recent'] and d['prior']:
-        diff = sum(d['prior'])/len(d['prior']) - sum(d['recent'])/len(d['recent'])
+    if d['recent'].count and d['prior'].count:
+        diff = d['prior'].average() - d['recent'].average()
         trends[jur] = 0 if abs(diff)<0.1 else (1 if diff>0 else -1)
 
 latest_out = {}
@@ -295,7 +342,7 @@ for j, v in latest.items():
 # ── Parse Outliers sheet (if Excel with multiple sheets) ─────────────────
 # Maps jurisdiction -> list of {tat, reason, search}
 outliers_by_jur = defaultdict(list)
-if suffix in ('.xlsx', '.xlsm'):
+if suffix in ('.xlsx', '.xlsm') and not args.admin_upload:
     try:
         import openpyxl as _opx
         _wb = _opx.load_workbook(str(IN_FILE), read_only=True, data_only=True)
@@ -303,12 +350,12 @@ if suffix in ('.xlsx', '.xlsm'):
         for _sn in _wb.sheetnames:
             if 'outlier' in _sn.lower(): _ws = _wb[_sn]; break
         if _ws:
-            _rows = list(_ws.iter_rows(values_only=True))
-            _hdr  = {str(h).strip().lower(): i for i,h in enumerate(_rows[0]) if h}
+            _rows = _ws.iter_rows(values_only=True)
+            _hdr  = {str(h).strip().lower(): i for i,h in enumerate(next(_rows, [])) if h}
             def _g(row, key):
                 i = _hdr.get(key)
                 return str(row[i]).strip() if i is not None and i < len(row) and row[i] else ''
-            for r in _rows[1:]:
+            for r in _rows:
                 jur    = _g(r,'jurisdiction')
                 jur    = resolver.resolve(jur)[0] or jur
                 reason = _g(r,'reason')
@@ -319,30 +366,19 @@ if suffix in ('.xlsx', '.xlsm'):
                         'reason': reason,
                         'search': _g(r,'search name'),
                     })
+        _wb.close()
     except Exception as e:
         print(f'Outliers sheet skipped: {e}')
 
 # ── Statewide averages ────────────────────────────────────────────────────
 # Group ALL rows by state prefix (e.g. 'MT-Lincoln County' → 'MT')
 # and compute average TAT across every search in that state.
-state_all_tats   = defaultdict(list)   # all rows, all time
-state_period_tats = defaultdict(lambda: defaultdict(list))
-
-for r in rows:
-    st = r['state']
-    if not st: continue
-    state_all_tats[st].append(r['tat'])
-    age = (max_date - r['dt']).days
-    for label, days in [('30d',30),('60d',60),('90d',90),('180d',180)]:
-        if age <= days:
-            state_period_tats[st][label].append(r['tat'])
-
 state_avg = {}
 for st, vals in state_all_tats.items():
     periods = {p: compute_stats(v) for p, v in state_period_tats[st].items()}
     state_avg[st] = {
-        'avg':     round(sum(vals) / len(vals), 6),
-        'count':   len(vals),
+        'avg':     round(vals.average(), 6),
+        'count':   vals.count,
         'periods': periods,
     }
 
@@ -404,8 +440,8 @@ out = {
     'isNewFormat': is_new_format,
     'stateAvg':    state_avg,   # top-level for easy frontend lookup
     'counties':    county_db,
-    'reportRowCount': len(rows),
-    'reportCompletedThrough': max(completed_dates).isoformat(sep=' ') if completed_dates else None,
+    'reportRowCount': row_count,
+    'reportCompletedThrough': completed_through.isoformat(sep=' ') if completed_through else None,
 }
 if existing_file.exists() and existing.get('closureSourceDate'):
     out['closureSourceDate'] = existing['closureSourceDate']

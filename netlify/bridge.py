@@ -27,6 +27,29 @@ async def invoke(payload):
     # Netlify, while the unchanged FastAPI route receives it internally.
     headers = [(str(k).lower(), str(v)) for k, v in payload.get("headers", [])]
     header_map = dict(headers)
+    if payload.get("report"):
+        # Background imports use an already verified file on disk. Do not turn
+        # it into base64, multipart bytes, or another in-memory copy.
+        from fastapi import HTTPException, UploadFile
+        report = payload["report"]
+        routes = {"/admin/upload": main.upload_csv,
+                  "/admin/preview-columns": main.preview_columns}
+        if payload["path"] not in routes:
+            raise ValueError("Invalid report route")
+        with open(report["path"], "rb") as handle:
+            upload = UploadFile(file=handle, filename=report["filename"])
+            try:
+                document = await routes[payload["path"]](
+                    password=header_map.get("x-victig-password", ""), file=upload)
+                status = 200
+            except HTTPException as error:
+                document, status = {"detail": error.detail}, error.status_code
+        if main.DATA_FILE.exists():
+            data = json.loads(main.DATA_FILE.read_text())
+            if strip_private_fields(data):
+                main.DATA_FILE.write_text(json.dumps(data))
+        return {"status": status, "headers": [["content-type", "application/json"]],
+                "body": base64.b64encode(json.dumps(document, default=str).encode()).decode()}
     query = dict(parse_qsl(payload.get("query", ""), keep_blank_values=True))
     if header_map.get("x-victig-password"):
         query["password"] = header_map["x-victig-password"]
